@@ -148,7 +148,6 @@ final class AppSettings: ObservableObject {
         planRefreshTask?.cancel()
         do {
             try PlanAccountStore.remove()
-            UserDefaults.standard.removeObject(forKey: "chatgptClientID")
             planAccountLabel = "Not connected"
             planModels = []
             planModel = ""

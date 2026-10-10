@@ -22,7 +22,11 @@ enum ChatGPTAuth {
 
     static func signIn(progress: @escaping (String) -> Void) async throws -> PlanAccount {
         let previous = try PlanAccountStore.load()
-        let registeredClientID = previous?.clientID ?? UserDefaults.standard.string(forKey: "chatgptClientID")
+        // Older builds saved the issued client ID before token exchange succeeded.
+        // Such a registration is bound to its original account/workspace and must
+        // never become the default for a fresh sign-in.
+        UserDefaults.standard.removeObject(forKey: "chatgptClientID")
+        let registeredClientID = previous?.clientID
         let listener = try LoopbackCallback()
         defer { listener.close() }
         let redirectURI = "http://127.0.0.1:\(listener.port)/auth/callback"
@@ -78,7 +82,6 @@ enum ChatGPTAuth {
               registeredClientID == nil || query["client_id"] == nil || query["client_id"] == registeredClientID else {
             throw ChatGPTAuthError.invalidCallback
         }
-        UserDefaults.standard.set(clientID, forKey: "chatgptClientID")
         let token = try await exchange([
             "grant_type": "authorization_code", "client_id": clientID, "code": code,
             "code_verifier": verifier, "redirect_uri": redirectURI, "resource": resource
