@@ -1,7 +1,7 @@
-# English Intent for macOS — product design
+# SenseDraft for macOS — product design
 
 Date: 2026-10-10
-Status: approved in conversation on 2026-10-10; written spec pending user review
+Status: approved in conversation on 2026-10-10
 
 ## Purpose
 
