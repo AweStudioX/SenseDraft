@@ -256,6 +256,15 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
            code == "subscription_sharing_usage_limit_exceeded" || code == "subscription_sharing_usage_unavailable" {
             return "ChatGPT plan usage is unavailable or at its limit. Review ChatGPT usage in Settings → AI."
         }
+        if case StreamDecoderError.invalidEvent = error {
+            return "ChatGPT returned an unreadable response event. Retry the analysis; if it persists, use an API key in Settings → AI."
+        }
+        if case StreamDecoderError.incomplete = error {
+            return "ChatGPT stopped before finishing this analysis. Try again."
+        }
+        if case StreamDecoderError.interrupted = error {
+            return "The ChatGPT response ended before completion. Try again."
+        }
         return "Analysis failed: \(error)"
     }
 
