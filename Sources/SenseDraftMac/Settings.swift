@@ -179,6 +179,7 @@ final class SettingsWindow {
         if window == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 430), styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
             window.title = "SenseDraft Settings"
+            window.isReleasedWhenClosed = false
             window.center()
             window.contentView = NSHostingView(rootView: SettingsView(settings: settings,
                 onSaveShortcuts: onSaveShortcuts, onBeginShortcutRecording: onBeginShortcutRecording,
@@ -395,7 +396,7 @@ enum ShortcutLabel {
             21:"4", 22:"6", 23:"5", 24:"=", 25:"9", 26:"7", 27:"-", 28:"8", 29:"0",
             30:"]", 31:"O", 32:"U", 33:"[", 34:"I", 35:"P", 36:"↩", 37:"L", 38:"J",
             39:"'", 40:"K", 41:";", 42:"\\", 43:",", 44:"/", 45:"N", 46:"M", 47:".",
-            48:"⇥", 49:"Space", 51:"⌫", 53:"⎋", 76:"⌤", 123:"←", 124:"→", 125:"↓", 126:"↑"
+            48:"⇥", 49:"Space", 50:"~", 51:"⌫", 53:"⎋", 76:"⌤", 123:"←", 124:"→", 125:"↓", 126:"↑"
         ]
         return label + (names[shortcut.keyCode] ?? "Key \(shortcut.keyCode)")
     }

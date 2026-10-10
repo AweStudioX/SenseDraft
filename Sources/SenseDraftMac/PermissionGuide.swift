@@ -28,6 +28,11 @@ struct PermissionSettingsView: View {
                 .fixedSize(horizontal: false, vertical: true)
             Label(authorized ? "Access granted" : "Access needed", systemImage: authorized ? "checkmark.circle.fill" : "exclamationmark.circle")
                 .foregroundStyle(authorized ? .green : .orange)
+            if !authorized {
+                Text("If SenseDraft is already enabled in System Settings, remove its old entry, add the current SenseDraft.app again, then restart SenseDraft. Rebuilding a locally signed app can invalidate its earlier grant.")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             HStack {
                 Button("Request access") { PermissionGuide.request(); refresh() }
                 Button("Open System Settings") { PermissionGuide.openSystemSettings() }
@@ -36,6 +41,8 @@ struct PermissionSettingsView: View {
             Spacer()
         }
         .padding(24)
+        .onAppear { refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refresh() }
     }
 
     private func refresh() { authorized = PermissionGuide.isAuthorized }
