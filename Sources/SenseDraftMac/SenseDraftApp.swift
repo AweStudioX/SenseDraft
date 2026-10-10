@@ -68,7 +68,7 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
                     throw error
                 }
             } else {
-                hotkeys = try GlobalHotkeys(settings: proposed, onAnalyze: { [weak self] in self?.analyze() }, onReplace: { [weak self] in self?.replace() })
+                hotkeys = try GlobalHotkeys(settings: proposed, onAnalyze: { [weak self] pid in self?.analyze(frontmostPID: pid) }, onReplace: { [weak self] in self?.replace() })
             }
             activeHotkeys = proposed
             UserDefaults.standard.set(try JSONEncoder().encode(proposed), forKey: "hotkeys")
@@ -96,11 +96,11 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func analyze() {
+    private func analyze(frontmostPID: pid_t?) {
         discardSession()
         review.model.message = ""
         do {
-            let field = try AccessibilityField.captureFocused()
+            let field = try AccessibilityField.captureFocused(frontmostPID: frontmostPID)
             captured = field
             review.model.source = field.source
             review.model.english = ""

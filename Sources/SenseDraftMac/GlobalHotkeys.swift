@@ -1,3 +1,4 @@
+import AppKit
 import Carbon
 import Foundation
 import SenseDraftCore
@@ -13,10 +14,10 @@ final class GlobalHotkeys {
     private var handlerRef: EventHandlerRef?
     private var analyzeRef: EventHotKeyRef?
     private var replaceRef: EventHotKeyRef?
-    private let onAnalyze: () -> Void
+    private let onAnalyze: (pid_t?) -> Void
     private let onReplace: () -> Void
 
-    init(settings: HotkeySettings, onAnalyze: @escaping () -> Void, onReplace: @escaping () -> Void) throws {
+    init(settings: HotkeySettings, onAnalyze: @escaping (pid_t?) -> Void, onReplace: @escaping () -> Void) throws {
         self.onAnalyze = onAnalyze
         self.onReplace = onReplace
         try register(settings)
@@ -52,7 +53,7 @@ final class GlobalHotkeys {
     }
 
     private func fire(id: UInt32) {
-        if id == 1 { onAnalyze() }
+        if id == 1 { onAnalyze(NSWorkspace.shared.frontmostApplication?.processIdentifier) }
         if id == 2 { onReplace() }
     }
 
@@ -62,7 +63,14 @@ final class GlobalHotkeys {
         let status = GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil, MemoryLayout<EventHotKeyID>.size, nil, &hotkeyID)
         guard status == noErr else { return status }
         let instance = Unmanaged<GlobalHotkeys>.fromOpaque(context).takeUnretainedValue()
-        DispatchQueue.main.async { @MainActor in instance.fire(id: hotkeyID.id) }
+        let id = hotkeyID.id
+        // The Carbon application event target runs on the main event loop. Capture
+        // focus before returning to it, while the source app still owns focus.
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { instance.fire(id: id) }
+        } else {
+            DispatchQueue.main.async { @MainActor in instance.fire(id: id) }
+        }
         return noErr
     }
 }

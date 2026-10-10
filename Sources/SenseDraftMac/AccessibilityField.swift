@@ -14,21 +14,30 @@ enum AccessibilityError: Error {
 
 @MainActor
 struct AccessibilityField {
-    static func captureFocused() throws -> CapturedField {
+    static func captureFocused(frontmostPID: pid_t?) throws -> CapturedField {
         guard AXIsProcessTrusted() else { throw AccessibilityError.permissionDenied }
-        let system = AXUIElementCreateSystemWide()
-        var raw: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &raw) == .success,
-              let raw, CFGetTypeID(raw) == AXUIElementGetTypeID() else {
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        guard frontmostPID != ownPID else { throw AccessibilityError.noFocusedField }
+        let element: AXUIElement?
+        if let frontmostPID {
+            // Electron editors can expose focus on their application AX object
+            // even when the system-wide focused element is temporarily absent.
+            element = focusedElement(of: AXUIElementCreateApplication(frontmostPID))
+                ?? focusedElement(of: AXUIElementCreateSystemWide())
+        } else {
+            element = focusedElement(of: AXUIElementCreateSystemWide())
+        }
+        guard let element else {
             throw AccessibilityError.noFocusedField
         }
-        let element = raw as! AXUIElement
         var pid: pid_t = 0
         guard AXUIElementGetPid(element, &pid) == .success,
               let appID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier else {
             throw AccessibilityError.unavailable
         }
-        guard pid != ProcessInfo.processInfo.processIdentifier else { throw AccessibilityError.noFocusedField }
+        guard pid != ownPID, frontmostPID == nil || pid == frontmostPID else {
+            throw AccessibilityError.noFocusedField
+        }
         let role = try stringValue(element, kAXRoleAttribute)
         let subrole = try? stringValue(element, kAXSubroleAttribute)
         guard subrole != kAXSecureTextFieldSubrole else { throw FieldError.protected }
@@ -43,6 +52,13 @@ struct AccessibilityField {
         try FieldPolicy.validate(role: role, protected: subrole == kAXSecureTextFieldSubrole, editable: editable, value: source)
         return CapturedField(element: element, pid: pid, appID: appID, source: source,
                              bounds: bounds(of: element), richTextRisk: hasMixedFormatting(element, source: source))
+    }
+
+    private static func focusedElement(of parent: AXUIElement) -> AXUIElement? {
+        var raw: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(parent, kAXFocusedUIElementAttribute as CFString, &raw) == .success,
+              let raw, CFGetTypeID(raw) == AXUIElementGetTypeID() else { return nil }
+        return (raw as! AXUIElement)
     }
 
     static func stringValue(_ element: AXUIElement, _ key: String) throws -> String {

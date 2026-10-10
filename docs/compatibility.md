@@ -8,5 +8,5 @@ The table records direct observations from the packaged `SenseDraft.app`. A succ
 | Safari textarea | Pending manual test | Pending manual test | Browser editor |
 | Chrome textarea | Pending manual test | Pending manual test | Browser editor |
 | Safari/Chrome contenteditable | Pending manual test | Pending manual test | Rich text may need copy fallback |
-| Messaging input | Pending manual test | Pending manual test | Target app to be selected |
+| Slack message composer | Pending packaged-app test | Pending packaged-app test | Slack exposes the focused composer as a settable text entry area. SenseDraft now queries Slack's application focus directly when the global focus query is unavailable; live capture and replacement still need confirmation. |
 | Sublime Text editor | No | No | In the observed Sublime window, Accessibility exposed the window and title but no readable focused editor value. SenseDraft now reports this explicitly. A Sublime plugin would be needed for direct integration. |
