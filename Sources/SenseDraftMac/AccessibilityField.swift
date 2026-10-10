@@ -45,10 +45,11 @@ struct AccessibilityField {
             throw AccessibilityError.unsupportedRead(appID)
         }
         let source: String
-        do { source = try stringValue(element, kAXValueAttribute) }
+        do { source = try fullText(of: element) }
         catch { throw AccessibilityError.unsupportedRead(appID) }
-        var settable: DarwinBoolean = false
-        let editable = AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable) == .success && settable.boolValue
+        let editable = isSettable(element, kAXValueAttribute) ||
+            (isSettable(element, kAXSelectedTextRangeAttribute) && isSettable(element, kAXSelectedTextAttribute))
+        guard editable else { throw AccessibilityError.unsupportedRead(appID) }
         try FieldPolicy.validate(role: role, protected: subrole == kAXSecureTextFieldSubrole, editable: editable, value: source)
         return CapturedField(element: element, pid: pid, appID: appID, source: source,
                              bounds: bounds(of: element), richTextRisk: hasMixedFormatting(element, source: source))
@@ -70,7 +71,31 @@ struct AccessibilityField {
         return value
     }
 
-    private static func bounds(of element: AXUIElement) -> CGRect? {
+    static func fullText(of element: AXUIElement) throws -> String {
+        if let value = try? stringValue(element, kAXValueAttribute), !value.isEmpty { return value }
+        var rawCount: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXNumberOfCharactersAttribute as CFString, &rawCount) == .success,
+              let count = rawCount as? NSNumber, count.intValue >= 0, count.intValue <= 100_000 else {
+            return try stringValue(element, kAXValueAttribute)
+        }
+        var range = CFRange(location: 0, length: count.intValue)
+        guard let parameter = AXValueCreate(.cfRange, &range) else { throw AccessibilityError.unavailable }
+        var rawText: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(element,
+                                                         kAXStringForRangeParameterizedAttribute as CFString,
+                                                         parameter, &rawText) == .success,
+              let text = rawText as? String else {
+            return try stringValue(element, kAXValueAttribute)
+        }
+        return text
+    }
+
+    static func isSettable(_ element: AXUIElement, _ key: String) -> Bool {
+        var settable: DarwinBoolean = false
+        return AXUIElementIsAttributeSettable(element, key as CFString, &settable) == .success && settable.boolValue
+    }
+
+    static func bounds(of element: AXUIElement) -> CGRect? {
         var positionRaw: CFTypeRef?
         var sizeRaw: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionRaw) == .success,
@@ -118,7 +143,7 @@ struct CapturedField {
         guard AXUIElementGetPid(element, &targetPID) == .success, targetPID == pid else {
             throw AccessibilityError.stale
         }
-        let currentSource = try AccessibilityField.stringValue(element, kAXValueAttribute)
+        let currentSource = try AccessibilityField.fullText(of: element)
         guard currentSource == source else { throw AccessibilityError.stale }
 
         let system = AXUIElementCreateSystemWide()
@@ -132,15 +157,22 @@ struct CapturedField {
             throw AccessibilityError.stale
         }
 
-        var settable: DarwinBoolean = false
-        guard AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable) == .success,
-              settable.boolValue else {
+        if AccessibilityField.isSettable(element, kAXValueAttribute) {
+            guard AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, replacement as CFString) == .success else {
+                throw AccessibilityError.writeFailed
+            }
+        } else if AccessibilityField.isSettable(element, kAXSelectedTextRangeAttribute),
+                  AccessibilityField.isSettable(element, kAXSelectedTextAttribute) {
+            var range = CFRange(location: 0, length: (source as NSString).length)
+            guard let value = AXValueCreate(.cfRange, &range),
+                  AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, value) == .success,
+                  AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, replacement as CFString) == .success else {
+                throw AccessibilityError.writeFailed
+            }
+        } else {
             throw AccessibilityError.unsupportedWrite
         }
-        guard AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, replacement as CFString) == .success else {
-            throw AccessibilityError.writeFailed
-        }
-        guard try AccessibilityField.stringValue(element, kAXValueAttribute) == replacement else {
+        guard try AccessibilityField.fullText(of: element) == replacement else {
             throw AccessibilityError.writeFailed
         }
     }

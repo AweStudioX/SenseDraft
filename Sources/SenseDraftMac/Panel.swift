@@ -15,6 +15,7 @@ final class ReviewModel: ObservableObject {
     @Published var allowFormattingLoss = false
     @Published var replaceShortcutText = "⌥⌘↩"
     @Published var providerLabel = ""
+    @Published var captureNotice = ""
     @Published var message = ""
     @Published var isLoading = false
     var onRegenerate: (() -> Void)?
@@ -81,6 +82,9 @@ private struct ReviewView: View {
             } else {
             if !model.providerLabel.isEmpty {
                 Text(model.providerLabel).font(.caption).foregroundStyle(.secondary)
+            }
+            if !model.captureNotice.isEmpty {
+                Text(model.captureNotice).font(.caption).foregroundStyle(.orange)
             }
             Text("Original input").font(.caption.bold()).foregroundStyle(.secondary)
             ScrollView {

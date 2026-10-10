@@ -1,6 +1,6 @@
 # SenseDraft
 
-SenseDraft is a macOS menu bar app for improving English while checking the intended meaning in Chinese. It reads the entire focused input when you press Analyze, so you do not need to select text. It never sends text merely because you type.
+SenseDraft is a macOS menu bar app for improving English while checking the intended meaning in Chinese. It reads the entire focused input when you press Analyze, so you do not need to select text. It never sends text merely because you type. For editors that hide their text from macOS Accessibility, Analyze can briefly select and copy the input, then restore the clipboard; the caret may move to the end. Clipboard-history apps may record this temporary copy.
 
 ## Build and launch
 
@@ -23,6 +23,6 @@ SenseDraft keeps the original English when it is already natural, and explains w
 
 SenseDraft reads the focused field only after Analyze. The input is sent to the selected OpenAI model for analysis; input and output are not saved to a history. Credentials remain in Keychain. The ChatGPT plan path follows OpenAI's Sign in with ChatGPT flow and is subject to the selected account's eligibility and limits. It has automated contract tests but still needs a manual sign-in and live request on an eligible account before it can be called verified.
 
-Cross-app replacement depends on each editor's Accessibility implementation. Password and protected fields are excluded. See `docs/compatibility.md` for tested apps.
+Cross-app replacement depends on each editor's Accessibility or standard keyboard command behavior. Password and protected fields are excluded. In editors that expose only a window to Accessibility, a copied source cannot always be proven to be an editable input; check the source shown in the panel before using Replace. See `docs/compatibility.md` for the verification status of each app.
 
 For the first manual pass, follow the short checklist in `docs/manual-testing.md`. The app has automated tests for analysis, response handling, shortcuts, and stale-target rules; live Accessibility replacement, API credentials, and ChatGPT authorization still require user testing.

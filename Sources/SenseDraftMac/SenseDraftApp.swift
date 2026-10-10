@@ -12,7 +12,10 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
     private let review = ReviewPanel()
     private var hotkeys: GlobalHotkeys?
     private var activeHotkeys: HotkeySettings?
-    private var captured: CapturedField?
+    private var captured: CapturedInput?
+    private var captureTask: Task<Void, Never>?
+    private var replaceTask: Task<Void, Never>?
+    private var isReplacing = false
     private var session: AnalysisSession?
     private var requestTask: Task<Void, Never>?
     private var keyboardLayoutObserver: NSObjectProtocol?
@@ -97,34 +100,59 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func analyze(frontmostPID: pid_t?) {
+        guard !isReplacing else { return }
         discardSession()
         review.model.message = ""
         do {
-            let field = try AccessibilityField.captureFocused(frontmostPID: frontmostPID)
-            captured = field
-            review.model.source = field.source
-            review.model.english = ""
-            review.model.chinese = ""
-            review.model.ambiguity = nil
-            review.model.reason = nil
-            review.model.richTextRisk = field.richTextRisk
-            review.model.allowFormattingLoss = false
-            review.model.providerLabel = settings.provider == .chatGPTPlan ? "Using ChatGPT plan" : "Using OpenAI API Key"
-            review.model.message = "Analyzing…"
-            review.show(near: field.bounds)
-            requestAnalysis(chineseIntent: nil)
+            presentCaptured(.accessibility(try AccessibilityField.captureFocused(frontmostPID: frontmostPID)))
         } catch AccessibilityError.permissionDenied {
             review.close()
             settingsWindow.show(tab: .permissions)
             settings.message = "Grant Accessibility access in the Permissions tab, then try again."
+        } catch AccessibilityError.noFocusedField, AccessibilityError.unsupportedRead,
+                AccessibilityError.unavailable {
+            guard let frontmostPID else { showCaptureError(AccessibilityError.noFocusedField); return }
+            captureTask = Task { [weak self] in
+                do {
+                    let field = try await KeyboardField.capture(frontmostPID: frontmostPID)
+                    guard !Task.isCancelled else { return }
+                    self?.presentCaptured(.keyboard(field))
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    self?.showCaptureError(error)
+                }
+            }
         } catch {
-            review.model.captureFailed = true
-            review.model.source = ""
-            review.model.english = ""
-            review.model.chinese = ""
-            review.model.message = captureErrorMessage(error)
-            review.show()
+            showCaptureError(error)
         }
+    }
+
+    private func presentCaptured(_ field: CapturedInput) {
+        captured = field
+        review.model.captureFailed = false
+        review.model.source = field.source
+        review.model.english = ""
+        review.model.chinese = ""
+        review.model.ambiguity = nil
+        review.model.reason = nil
+        review.model.richTextRisk = field.richTextRisk
+        review.model.allowFormattingLoss = false
+        review.model.providerLabel = settings.provider == .chatGPTPlan ? "Using ChatGPT plan" : "Using OpenAI API Key"
+        review.model.captureNotice = field.usedKeyboardFallback
+            ? "Keyboard capture: caret may move to the end. Return to the original field before Replace."
+            : ""
+        review.model.message = "Analyzing…"
+        review.show(near: field.bounds)
+        requestAnalysis(chineseIntent: nil)
+    }
+
+    private func showCaptureError(_ error: Error) {
+        review.model.captureFailed = true
+        review.model.source = ""
+        review.model.english = ""
+        review.model.chinese = ""
+        review.model.message = captureErrorMessage(error)
+        review.show()
     }
 
     private func regenerate() {
@@ -177,7 +205,9 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
                     self.review.model.worthChanging = result.worthChanging
                     self.review.model.isReady = true
                     self.review.model.message = result.worthChanging
-                        ? "Review the meaning, then press your Replace shortcut."
+                        ? (field.usedKeyboardFallback
+                            ? "Return to the original field, then press your Replace shortcut."
+                            : "Review the meaning, then press your Replace shortcut.")
                         : "Already natural — no change suggested."
                     self.review.model.isLoading = false
                 } catch {
@@ -192,6 +222,7 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func replace() {
+        guard !isReplacing else { return }
         guard let field = captured, let session,
               review.model.isReady, !review.model.isLoading else { return }
         guard !review.model.english.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -204,16 +235,28 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
             review.show(near: field.bounds)
             return
         }
-        do {
-            guard session.snapshot.source == field.source else { throw AccessibilityError.stale }
-            try field.replaceIfUnchanged(with: review.model.english)
-            review.model.message = "Replaced the original input."
-            review.model.isReady = false
-            captured = nil
-            self.session = nil
-        } catch {
-            review.model.message = replaceErrorMessage(error)
-            review.show(near: field.bounds)
+        review.model.isLoading = true
+        isReplacing = true
+        replaceTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                self.review.model.isLoading = false
+                self.isReplacing = false
+                self.replaceTask = nil
+            }
+            do {
+                guard session.snapshot.source == field.source else { throw AccessibilityError.stale }
+                try await field.replaceIfUnchanged(with: self.review.model.english)
+                guard !Task.isCancelled else { return }
+                self.review.model.message = "Replaced the original input."
+                self.review.model.isReady = false
+                self.captured = nil
+                self.session = nil
+            } catch {
+                guard !Task.isCancelled else { return }
+                self.review.model.message = self.replaceErrorMessage(error)
+                self.review.show(near: field.bounds)
+            }
         }
     }
 
@@ -269,6 +312,10 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func discardSession() {
+        captureTask?.cancel()
+        captureTask = nil
+        replaceTask?.cancel()
+        replaceTask = nil
         requestTask?.cancel()
         requestTask = nil
         captured = nil
@@ -285,12 +332,27 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         review.model.richTextRisk = false
         review.model.allowFormattingLoss = false
         review.model.providerLabel = ""
+        review.model.captureNotice = ""
     }
 
     private func captureErrorMessage(_ error: Error) -> String {
         switch error {
-        case AccessibilityError.unsupportedRead(let appID) where appID == "com.sublimetext.4":
-            "Sublime Text does not expose this editor's text through macOS Accessibility. SenseDraft cannot analyze it from the global shortcut yet; no text was sent."
+        case KeyboardFieldError.unsupportedFocus:
+            "The focused control is not an editable text field. No text was sent."
+        case KeyboardFieldError.clipboardUnavailable:
+            "Could not safely preserve the clipboard for this editor. No text was sent."
+        case KeyboardFieldError.clipboardChanged:
+            "The clipboard changed during capture. Analyze again. No text was sent."
+        case KeyboardFieldError.copyFailed:
+            "This editor did not provide text through Copy. No text was sent."
+        case KeyboardFieldError.tooLong:
+            "This editor contains more than 100 KB of text. Narrow the input before analyzing."
+        case KeyboardFieldError.stale:
+            "The active editor changed during capture. Focus the input and press Analyze again."
+        case KeyboardFieldError.noTarget:
+            "Could not identify the active editor window. No text was sent."
+        case KeyboardFieldError.eventFailed:
+            "Could not send the editor's Copy shortcut. Release the shortcut keys and try again."
         case AccessibilityError.unsupportedRead:
             "This editor does not expose its text through macOS Accessibility. No text was sent. Try a standard text field."
         case FieldError.protected: "Protected fields cannot be analyzed."
@@ -304,6 +366,12 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
 
     private func replaceErrorMessage(_ error: Error) -> String {
         switch error {
+        case KeyboardFieldError.stale:
+            "Return to the original input field and press Replace. Its text and window must still match."
+        case KeyboardFieldError.writeUnverified:
+            "Could not verify the keyboard replacement. Check the original field before any retry; the English remains available to copy."
+        case KeyboardFieldError.clipboardChanged:
+            "The clipboard changed during replacement. Check the original field before retrying."
         case AccessibilityError.stale: "The original input or focus changed. Analyze again before replacing."
         case AccessibilityError.unsupportedWrite: "This editor does not support direct replacement. Copy the English instead."
         default: "Replacement could not be verified. Copy the English or check the original field before retrying."

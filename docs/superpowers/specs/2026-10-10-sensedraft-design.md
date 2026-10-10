@@ -32,7 +32,7 @@ The panel may take keyboard focus for editing. Target identity is saved separate
 
 ### Input adapter
 
-A native Swift macOS menu bar app uses Accessibility APIs to find the frontmost application's focused element. It checks that the element is editable and unprotected, reads its text value, and captures a stable target reference while the panel is open. A compatibility adapter may use a user initiated copy path for an unsupported editor only if it can reliably preserve and restore clipboard content and selection; otherwise it returns a clear unsupported result. No fallback may silently replace text.
+A native Swift macOS menu bar app uses Accessibility APIs to find the frontmost application's focused element. It checks that the element is editable and unprotected, reads its text value or a supported full-text range, and captures a stable target reference while the panel is open. When Accessibility does not expose text, a shortcut-triggered keyboard adapter may select and copy the full input if it can snapshot the app/window and clipboard, verify the copy, and restore clipboard ownership safely. It restores the selection through Accessibility when available; otherwise it collapses the selection to the end and discloses that caret movement. No fallback may silently replace text.
 
 ### Session controller
 
