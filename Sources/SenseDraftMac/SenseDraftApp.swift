@@ -15,6 +15,7 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
     private var captured: CapturedField?
     private var session: AnalysisSession?
     private var requestTask: Task<Void, Never>?
+    private var keyboardLayoutObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -23,6 +24,12 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         review.model.onCopy = { [weak self] in self?.copyEnglish() }
         review.model.onClose = { [weak self] in self?.review.close() }
         review.onDismiss = { [weak self] in self?.discardSession() }
+        keyboardLayoutObserver = NotificationCenter.default.addObserver(
+            forName: NSTextInputContext.keyboardSelectionDidChangeNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.refreshShortcutLabels() }
+        }
         saveShortcuts()
         if !UserDefaults.standard.bool(forKey: "onboardingShown") {
             UserDefaults.standard.set(true, forKey: "onboardingShown")
@@ -33,6 +40,7 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         requestTask?.cancel()
         hotkeys?.unregister()
+        if let keyboardLayoutObserver { NotificationCenter.default.removeObserver(keyboardLayoutObserver) }
     }
 
     private func setupMenuBar() {
@@ -79,6 +87,13 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         guard let hotkeys, let activeHotkeys else { return }
         do { try hotkeys.register(activeHotkeys) }
         catch { settings.shortcutMessage = "Could not reactivate shortcuts: \(error)" }
+    }
+
+    private func refreshShortcutLabels() {
+        settings.shortcutDisplayRevision += 1
+        if let activeHotkeys {
+            review.model.replaceShortcutText = ShortcutLabel.describe(activeHotkeys.replace)
+        }
     }
 
     private func analyze() {
