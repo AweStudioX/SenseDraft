@@ -95,18 +95,31 @@ final class AppSettings: ObservableObject {
         connectTask = Task {
             defer { connectingPlan = false; connectTask = nil }
             do {
-                let account = try await ChatGPTAuth.signIn()
+                let account = try await ChatGPTAuth.signIn { [weak self] status in self?.message = status }
                 try Task.checkCancellation()
                 planAccountLabel = account.email ?? "Connected ChatGPT account"
-                let models = try await ChatGPTPlanProvider(token: account.accessToken, model: planModel).listModels()
-                try Task.checkCancellation()
-                planModels = models
-                if !models.contains(where: { $0.slug == planModel }) { planModel = models.first?.slug ?? "" }
                 provider = .chatGPTPlan
                 saveAI()
-                message = models.isEmpty ? "Connected, but no models are available for this account." : "ChatGPT plan connected."
+                message = "ChatGPT connected. Loading available models…"
+                do {
+                    let models = try await ChatGPTPlanProvider(token: account.accessToken, model: planModel).listModels()
+                    try Task.checkCancellation()
+                    planModels = models
+                    if !models.contains(where: { $0.slug == planModel }) { planModel = models.first?.slug ?? "" }
+                    saveAI()
+                    message = models.isEmpty ? "Connected, but no models are available for this account." : "ChatGPT plan connected."
+                } catch {
+                    if !Task.isCancelled { message = "ChatGPT connected, but models could not load: \(error)" }
+                }
             } catch {
-                message = Task.isCancelled ? "ChatGPT connection cancelled." : "ChatGPT connection failed: \(error)"
+                if Task.isCancelled {
+                    message = "ChatGPT connection cancelled."
+                } else if case ChatGPTAuthError.httpStatus(let status, let code) = error {
+                    let detail = code.map { " (\($0))" } ?? ""
+                    message = "Token exchange failed: HTTP \(status)\(detail). Start ChatGPT sign-in again."
+                } else {
+                    message = "ChatGPT connection failed: \(error)"
+                }
             }
         }
     }
@@ -201,6 +214,10 @@ private struct SettingsView: View {
                 Picker("AI source", selection: $settings.provider) {
                     ForEach(AIProviderChoice.allCases) { choice in Text(choice.rawValue).tag(choice) }
                 }.pickerStyle(.segmented)
+                if !settings.message.isEmpty {
+                    Text(settings.message).font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 Picker("English locale", selection: $settings.locale) {
                     Text("US English").tag("en-US")
                     Text("UK English").tag("en-GB")
@@ -232,10 +249,12 @@ private struct SettingsView: View {
                             ForEach(settings.planModels, id: \.slug) { model in Text(model.displayName).tag(model.slug) }
                         }
                     }
+                    if settings.planAccountLabel != "Not connected" {
+                        Button("Refresh models") { settings.refreshPlanModels() }
+                    }
                     Link("Manage ChatGPT usage", destination: URL(string: "https://chatgpt.com/settings/usage")!)
                 }
                 Button("Save AI settings") { settings.saveAI() }
-                Text(settings.message).foregroundStyle(.secondary)
                 Spacer()
             }
             .padding(24)

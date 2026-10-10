@@ -3,6 +3,7 @@ import CryptoKit
 import Darwin
 import Foundation
 import Security
+import SenseDraftCore
 
 enum ChatGPTAuthError: Error {
     case callbackUnavailable
@@ -11,7 +12,7 @@ enum ChatGPTAuthError: Error {
     case denied
     case invalidToken
     case missingPlanPermission
-    case httpStatus(Int)
+    case httpStatus(Int, String?)
 }
 
 @MainActor
@@ -19,7 +20,7 @@ enum ChatGPTAuth {
     private static let resource = "https://api.openai.com/v1"
     private static let tokenURL = URL(string: "https://auth.openai.com/api/accounts/oauth/token")!
 
-    static func signIn() async throws -> PlanAccount {
+    static func signIn(progress: @escaping (String) -> Void) async throws -> PlanAccount {
         let previous = try PlanAccountStore.load()
         let registeredClientID = previous?.clientID ?? UserDefaults.standard.string(forKey: "chatgptClientID")
         let listener = try LoopbackCallback()
@@ -63,6 +64,7 @@ enum ChatGPTAuth {
         } onCancel: {
             listener.close()
         }
+        progress("Authorization response received. Exchanging code…")
         var query: [String: String] = [:]
         for item in callback.queryItems ?? [] {
             guard query[item.name] == nil, let value = item.value else { throw ChatGPTAuthError.invalidCallback }
@@ -81,6 +83,7 @@ enum ChatGPTAuth {
             "grant_type": "authorization_code", "client_id": clientID, "code": code,
             "code_verifier": verifier, "redirect_uri": redirectURI, "resource": resource
         ])
+        progress("Authorization accepted. Verifying account…")
         let identity = try await verifyIDToken(token.idToken, clientID: clientID, nonce: nonce)
         try Task.checkCancellation()
         if let previous, previous.subject != identity.subject { throw ChatGPTAuthError.invalidToken }
@@ -123,7 +126,9 @@ enum ChatGPTAuth {
         request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let response = response as? HTTPURLResponse else { throw ChatGPTAuthError.invalidToken }
-        guard response.statusCode == 200 else { throw ChatGPTAuthError.httpStatus(response.statusCode) }
+        guard response.statusCode == 200 else {
+            throw ChatGPTAuthError.httpStatus(response.statusCode, OAuthFailure.parse(data)?.code)
+        }
         return try JSONDecoder().decode(TokenResponse.self, from: data)
     }
 
@@ -309,7 +314,7 @@ private final class LoopbackCallback: @unchecked Sendable {
                 let count = Darwin.read(client, &buffer, buffer.count)
                 let request = count > 0 ? String(decoding: buffer.prefix(Int(count)), as: UTF8.self) : ""
                 let path = request.split(separator: "\r\n").first?.split(separator: " ").dropFirst().first.map(String.init)
-                let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\nSenseDraft sign-in received. You can return to the app."
+                let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\nAuthorization response received. Return to SenseDraft to check the connection status."
                 _ = response.withCString { Darwin.write(client, $0, strlen($0)) }
                 guard let path, path.hasPrefix("/auth/callback"),
                       let components = URLComponents(string: "http://127.0.0.1:\(self.port)\(path)") else {
