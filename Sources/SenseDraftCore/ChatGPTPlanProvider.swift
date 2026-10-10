@@ -1,7 +1,7 @@
 import Foundation
 
 public enum ChatGPTPlanError: Error, Equatable {
-    case httpStatus(Int)
+    case httpStatus(Int, String?)
     case invalidResponse
     case noModels
 }
@@ -32,7 +32,7 @@ public struct ChatGPTPlanProvider: LanguageService {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let response = response as? HTTPURLResponse else { throw ChatGPTPlanError.invalidResponse }
-        guard (200..<300).contains(response.statusCode) else { throw ChatGPTPlanError.httpStatus(response.statusCode) }
+        guard (200..<300).contains(response.statusCode) else { throw ChatGPTPlanError.httpStatus(response.statusCode, Self.errorCode(from: data)) }
         let envelope = try JSONDecoder().decode(ModelEnvelope.self, from: data)
         return envelope.models.filter { $0.visibility == "list" }
     }
@@ -41,12 +41,19 @@ public struct ChatGPTPlanProvider: LanguageService {
         let request = try makeRequest(input)
         let (bytes, response) = try await URLSession.shared.bytes(for: request)
         guard let response = response as? HTTPURLResponse else { throw ChatGPTPlanError.invalidResponse }
-        guard (200..<300).contains(response.statusCode) else { throw ChatGPTPlanError.httpStatus(response.statusCode) }
+        guard (200..<300).contains(response.statusCode) else {
+            var errorData = Data()
+            for try await byte in bytes {
+                if errorData.count >= 8192 { break }
+                errorData.append(byte)
+            }
+            throw ChatGPTPlanError.httpStatus(response.statusCode, Self.errorCode(from: errorData))
+        }
         var stream = ""
         for try await line in bytes.lines {
             stream += line + "\n"
         }
-        return try Self.parse(stream)
+        return try Self.parse(stream, source: input.source)
     }
 
     public func makeRequest(_ input: AnalysisInput) throws -> URLRequest {
@@ -55,9 +62,11 @@ public struct ChatGPTPlanProvider: LanguageService {
             "properties": [
                 "english": ["type": "string"],
                 "chineseMeaning": ["type": "string"],
-                "ambiguity": ["type": ["string", "null"]]
+                "ambiguity": ["type": ["string", "null"]],
+                "worthChanging": ["type": "boolean"],
+                "reason": ["type": ["string", "null"]]
             ],
-            "required": ["english", "chineseMeaning", "ambiguity"],
+            "required": ["english", "chineseMeaning", "ambiguity", "worthChanging", "reason"],
             "additionalProperties": false
         ]
         let body: [String: Any] = [
@@ -76,13 +85,19 @@ public struct ChatGPTPlanProvider: LanguageService {
         return request
     }
 
-    public static func parse(_ stream: String) throws -> AnalysisResult {
+    public static func parse(_ stream: String, source: String? = nil) throws -> AnalysisResult {
         let text = try StreamDecoder.consume(stream)
         guard let data = text.data(using: .utf8),
               let output = try? JSONDecoder().decode(Payload.self, from: data) else {
             throw ChatGPTPlanError.invalidResponse
         }
-        return try AnalysisResult(english: output.english, chineseMeaning: output.chineseMeaning, ambiguity: output.ambiguity)
+        return try AnalysisResult(english: output.english, chineseMeaning: output.chineseMeaning, ambiguity: output.ambiguity, worthChanging: output.worthChanging, reason: output.reason, source: source)
+    }
+
+    static func errorCode(from data: Data) -> String? {
+        guard let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let error = body["error"] as? [String: Any] else { return nil }
+        return error["code"] as? String
     }
 }
 
@@ -94,4 +109,6 @@ private struct Payload: Decodable {
     let english: String
     let chineseMeaning: String
     let ambiguity: String?
+    let worthChanging: Bool
+    let reason: String?
 }

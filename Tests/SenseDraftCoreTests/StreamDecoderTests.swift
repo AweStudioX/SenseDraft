@@ -19,4 +19,9 @@ final class StreamDecoderTests: XCTestCase {
             XCTAssertEqual(error as? StreamDecoderError, .failed("subscription_sharing_usage_limit_exceeded"))
         }
     }
+
+    func testCompletedEventCanProvideFinalText() throws {
+        let stream = #"data: {"type":"response.completed","response":{"output":[{"type":"message","content":[{"type":"output_text","text":"final"}]}]}}"# + "\n\n"
+        XCTAssertEqual(try StreamDecoder.consume(stream), "final")
+    }
 }

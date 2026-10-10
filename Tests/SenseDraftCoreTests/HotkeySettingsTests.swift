@@ -13,4 +13,9 @@ final class HotkeySettingsTests: XCTestCase {
         let shortcut = Shortcut(keyCode: 14, modifiers: 2304)
         XCTAssertThrowsError(try HotkeySettings(analyze: shortcut, replace: shortcut))
     }
+
+    func testModifierIsRequired() {
+        XCTAssertThrowsError(try HotkeySettings(analyze: .init(keyCode: 14, modifiers: 0), replace: .defaultReplace))
+        XCTAssertThrowsError(try HotkeySettings(analyze: .init(keyCode: 14, modifiers: 512), replace: .defaultReplace))
+    }
 }

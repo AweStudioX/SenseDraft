@@ -23,7 +23,11 @@ public enum StreamDecoder {
             }
             switch event.type {
             case "response.output_text.delta": output += event.delta ?? ""
-            case "response.completed": completed = true
+            case "response.completed":
+                completed = true
+                if output.isEmpty {
+                    output = event.response?.output?.compactMap(\.content).flatMap { $0 }.first(where: { $0.type == "output_text" })?.text ?? ""
+                }
             case "response.failed": throw StreamDecoderError.failed(event.response?.error?.code ?? "unknown_error")
             case "response.incomplete": throw StreamDecoderError.incomplete
             default: break
@@ -42,8 +46,18 @@ private struct StreamEvent: Decodable {
 
 private struct StreamResponse: Decodable {
     let error: StreamError?
+    let output: [StreamMessage]?
 }
 
 private struct StreamError: Decodable {
     let code: String?
+}
+
+private struct StreamMessage: Decodable {
+    let content: [StreamContent]?
+}
+
+private struct StreamContent: Decodable {
+    let type: String
+    let text: String?
 }

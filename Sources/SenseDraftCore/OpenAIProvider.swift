@@ -43,9 +43,11 @@ public struct OpenAIProvider: LanguageService {
             "properties": [
                 "english": ["type": "string"],
                 "chineseMeaning": ["type": "string"],
-                "ambiguity": ["type": ["string", "null"]]
+                "ambiguity": ["type": ["string", "null"]],
+                "worthChanging": ["type": "boolean"],
+                "reason": ["type": ["string", "null"]]
             ],
-            "required": ["english", "chineseMeaning", "ambiguity"],
+            "required": ["english", "chineseMeaning", "ambiguity", "worthChanging", "reason"],
             "additionalProperties": false
         ]
         let body: [String: Any] = [
@@ -76,7 +78,7 @@ public struct OpenAIProvider: LanguageService {
               let output = try? JSONDecoder().decode(AnalysisPayload.self, from: outputData) else {
             throw OpenAIProviderError.invalidResponse
         }
-        return try AnalysisResult(english: output.english, chineseMeaning: output.chineseMeaning, ambiguity: output.ambiguity)
+        return try AnalysisResult(english: output.english, chineseMeaning: output.chineseMeaning, ambiguity: output.ambiguity, worthChanging: output.worthChanging, reason: output.reason, source: input.source)
     }
 }
 
@@ -98,4 +100,6 @@ private struct AnalysisPayload: Decodable {
     let english: String
     let chineseMeaning: String
     let ambiguity: String?
+    let worthChanging: Bool
+    let reason: String?
 }

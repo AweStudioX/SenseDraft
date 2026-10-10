@@ -15,8 +15,12 @@ The first launch opens the Permissions guide. In **AI**, choose either an OpenAI
 
 Focus an editable English input field and press Analyze. Review the improved English and Chinese interpretation. If the meaning is wrong, edit the Chinese and click **Regenerate from Chinese**. Press Replace to write the reviewed English back to the original field. If the original has changed, replacement is refused. You can copy the English from the panel when an editor does not support direct replacement.
 
+SenseDraft keeps the original English when it is already natural, and explains why it did not suggest a change. You can also edit the proposed English directly before replacing. If the app detects mixed text formatting, it asks you to confirm that replacement may remove formatting; copying the English is always available. Escape closes the review panel. The ChatGPT sign-in wait can be cancelled from Settings.
+
 ## Privacy and current scope
 
 SenseDraft reads the focused field only after Analyze. The input is sent to the selected OpenAI model for analysis; input and output are not saved to a history. Credentials remain in Keychain. The ChatGPT plan path follows OpenAI's Sign in with ChatGPT flow and is subject to the selected account's eligibility and limits. It has automated contract tests but still needs a manual sign-in and live request on an eligible account before it can be called verified.
 
 Cross-app replacement depends on each editor's Accessibility implementation. Password and protected fields are excluded. See `docs/compatibility.md` for tested apps.
+
+For the first manual pass, follow the short checklist in `docs/manual-testing.md`. The app has automated tests for analysis, response handling, shortcuts, and stale-target rules; live Accessibility replacement, API credentials, and ChatGPT authorization still require user testing.

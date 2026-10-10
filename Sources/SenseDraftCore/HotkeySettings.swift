@@ -15,6 +15,7 @@ public extension Shortcut {
 
 public enum HotkeySettingsError: Error {
     case duplicate
+    case missingModifier
 }
 
 public struct HotkeySettings: Codable, Sendable {
@@ -23,6 +24,10 @@ public struct HotkeySettings: Codable, Sendable {
 
     public init(analyze: Shortcut, replace: Shortcut) throws {
         guard analyze != replace else { throw HotkeySettingsError.duplicate }
+        let required: UInt32 = 256 | 2048 | 4096
+        guard analyze.modifiers & required != 0, replace.modifiers & required != 0 else {
+            throw HotkeySettingsError.missingModifier
+        }
         self.analyze = analyze
         self.replace = replace
     }

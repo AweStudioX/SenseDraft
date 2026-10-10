@@ -7,6 +7,13 @@ final class ReviewModel: ObservableObject {
     @Published var english = ""
     @Published var chinese = ""
     @Published var ambiguity: String?
+    @Published var reason: String?
+    @Published var worthChanging = true
+    @Published var isReady = false
+    @Published var richTextRisk = false
+    @Published var allowFormattingLoss = false
+    @Published var replaceShortcutText = "⌥⌘↩"
+    @Published var providerLabel = ""
     @Published var message = ""
     @Published var isLoading = false
     var onRegenerate: (() -> Void)?
@@ -15,11 +22,12 @@ final class ReviewModel: ObservableObject {
 }
 
 @MainActor
-final class ReviewPanel {
+final class ReviewPanel: NSObject, NSWindowDelegate {
     let model = ReviewModel()
     private let panel: NSPanel
+    var onDismiss: (() -> Void)?
 
-    init() {
+    override init() {
         panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 560, height: 510), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         panel.title = "SenseDraft"
         panel.level = .floating
@@ -27,14 +35,26 @@ final class ReviewPanel {
         panel.isReleasedWhenClosed = false
         panel.contentView = NSHostingView(rootView: ReviewView(model: model))
         panel.center()
+        super.init()
+        panel.delegate = self
     }
 
-    func show() {
+    func show(near fieldBounds: CGRect? = nil) {
+        if let fieldBounds, let screen = NSScreen.main {
+            let width = panel.frame.width
+            let height = panel.frame.height
+            let left = min(max(fieldBounds.minX, screen.visibleFrame.minX), screen.visibleFrame.maxX - width)
+            let top = screen.frame.maxY - fieldBounds.maxY - 8
+            let bottom = min(max(top - height, screen.visibleFrame.minY), screen.visibleFrame.maxY - height)
+            panel.setFrameOrigin(NSPoint(x: left, y: bottom))
+        }
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
     func close() { panel.close() }
+
+    func windowWillClose(_ notification: Notification) { onDismiss?() }
 }
 
 private struct ReviewView: View {
@@ -47,6 +67,9 @@ private struct ReviewView: View {
                 Spacer()
                 if model.isLoading { ProgressView().controlSize(.small) }
             }
+            if !model.providerLabel.isEmpty {
+                Text(model.providerLabel).font(.caption).foregroundStyle(.secondary)
+            }
             Text("Original input").font(.caption.bold()).foregroundStyle(.secondary)
             ScrollView {
                 Text(model.source).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
@@ -58,16 +81,26 @@ private struct ReviewView: View {
             Text("Improved English").font(.caption.bold()).foregroundStyle(.secondary)
             TextEditor(text: $model.english).frame(height: 100)
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(.separator))
+                .disabled(model.isLoading || !model.isReady)
+
+            if let reason = model.reason, !reason.isEmpty {
+                Text(reason).font(.callout).foregroundStyle(.secondary)
+            }
 
             Text("Chinese interpretation — edit if the meaning is wrong")
                 .font(.caption.bold()).foregroundStyle(.secondary)
             TextEditor(text: $model.chinese).frame(height: 85)
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(.separator))
+                .disabled(model.isLoading)
 
             if let ambiguity = model.ambiguity, !ambiguity.isEmpty {
                 Label(ambiguity, systemImage: "questionmark.bubble")
                     .font(.callout)
                     .foregroundStyle(.orange)
+            }
+            if model.richTextRisk {
+                Toggle("Replace may discard text formatting", isOn: $model.allowFormattingLoss)
+                    .font(.callout)
             }
             Text(model.message).font(.callout).foregroundStyle(.secondary)
                 .lineLimit(2)
@@ -75,9 +108,9 @@ private struct ReviewView: View {
                 Button("Regenerate from Chinese") { model.onRegenerate?() }
                     .disabled(model.isLoading || model.chinese.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button("Copy English") { model.onCopy?() }
-                    .disabled(model.english.isEmpty)
+                    .disabled(!model.isReady || model.english.isEmpty)
                 Spacer()
-                Text("Replace: ⌘⌥↩").font(.caption).foregroundStyle(.secondary)
+                Text("Replace: \(model.replaceShortcutText)").font(.caption).foregroundStyle(.secondary)
             }
         }
         .padding(18)

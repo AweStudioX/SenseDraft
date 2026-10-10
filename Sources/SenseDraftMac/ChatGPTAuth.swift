@@ -58,7 +58,11 @@ enum ChatGPTAuth {
         }
         components.queryItems = items
         guard let url = components.url, NSWorkspace.shared.open(url) else { throw ChatGPTAuthError.callbackUnavailable }
-        let callback = try await listener.waitForCallback()
+        let callback = try await withTaskCancellationHandler {
+            try await listener.waitForCallback()
+        } onCancel: {
+            listener.close()
+        }
         var query: [String: String] = [:]
         for item in callback.queryItems ?? [] {
             guard query[item.name] == nil, let value = item.value else { throw ChatGPTAuthError.invalidCallback }
@@ -78,6 +82,7 @@ enum ChatGPTAuth {
             "code_verifier": verifier, "redirect_uri": redirectURI, "resource": resource
         ])
         let identity = try await verifyIDToken(token.idToken, clientID: clientID, nonce: nonce)
+        try Task.checkCancellation()
         if let previous, previous.subject != identity.subject { throw ChatGPTAuthError.invalidToken }
         let account = PlanAccount(
             clientID: clientID, subject: identity.subject, email: identity.email,
@@ -232,6 +237,8 @@ private enum ASN1 {
 private final class LoopbackCallback: @unchecked Sendable {
     let port: UInt16
     private let fd: Int32
+    private let lock = NSLock()
+    private var closed = false
 
     init() throws {
         let socketFD = Darwin.socket(AF_INET, SOCK_STREAM, 0)
@@ -260,19 +267,41 @@ private final class LoopbackCallback: @unchecked Sendable {
         port = UInt16(bigEndian: address.sin_port)
     }
 
-    func close() { Darwin.close(fd) }
+    func close() {
+        lock.lock()
+        defer { lock.unlock() }
+        if !closed { closed = true; Darwin.close(fd) }
+    }
+
+    private var isClosed: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return closed
+    }
 
     func waitForCallback() async throws -> URLComponents {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                var descriptor = pollfd(fd: self.fd, events: Int16(POLLIN), revents: 0)
-                guard Darwin.poll(&descriptor, 1, 180_000) > 0 else {
-                    continuation.resume(throwing: ChatGPTAuthError.callbackTimedOut)
-                    return
+                var ready = false
+                for _ in 0..<600 {
+                    if self.isClosed {
+                        continuation.resume(throwing: CancellationError())
+                        return
+                    }
+                    var descriptor = pollfd(fd: self.fd, events: Int16(POLLIN), revents: 0)
+                    if Darwin.poll(&descriptor, 1, 1000) > 0 {
+                        if self.isClosed {
+                            continuation.resume(throwing: CancellationError())
+                            return
+                        }
+                        ready = true
+                        break
+                    }
                 }
+                guard ready else { continuation.resume(throwing: ChatGPTAuthError.callbackTimedOut); return }
                 let client = Darwin.accept(self.fd, nil, nil)
                 guard client >= 0 else {
-                    continuation.resume(throwing: ChatGPTAuthError.invalidCallback)
+                    continuation.resume(throwing: self.isClosed ? CancellationError() : ChatGPTAuthError.invalidCallback)
                     return
                 }
                 defer { Darwin.close(client) }

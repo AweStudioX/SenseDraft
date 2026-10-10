@@ -16,4 +16,10 @@ final class AnalysisTests: XCTestCase {
         XCTAssertThrowsError(try AnalysisResult(english: " ", chineseMeaning: "释义", ambiguity: nil))
         XCTAssertThrowsError(try AnalysisResult(english: "Hello.", chineseMeaning: " ", ambiguity: nil))
     }
+
+    func testNoSuggestionMustKeepOriginalEnglish() throws {
+        let result = try AnalysisResult(english: "This works well.", chineseMeaning: "这很有效。", ambiguity: nil, worthChanging: false, reason: "Already natural")
+        XCTAssertFalse(result.worthChanging)
+        XCTAssertThrowsError(try AnalysisResult(english: "Different text", chineseMeaning: "释义", ambiguity: nil, worthChanging: false, reason: nil, source: "Original text"))
+    }
 }

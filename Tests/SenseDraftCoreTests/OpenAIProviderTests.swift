@@ -20,7 +20,7 @@ actor RecordingTransport: HTTPTransport {
 }
 
 final class OpenAIProviderTests: XCTestCase {
-    private let completed = #"{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"{\"english\":\"I can send it tomorrow.\",\"chineseMeaning\":\"我明天可以发给你。\",\"ambiguity\":null}"}]}]}"#
+    private let completed = #"{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"{\"english\":\"I can send it tomorrow.\",\"chineseMeaning\":\"我明天可以发给你。\",\"ambiguity\":null,\"worthChanging\":true,\"reason\":\"Clearer commitment\"}"}]}]}"#
 
     func testInitialPromptPreservesMeaning() throws {
         let input = try AnalysisInput(source: "I might send 2 files to Sam.", locale: "en-US", chineseIntent: nil)
@@ -28,6 +28,7 @@ final class OpenAIProviderTests: XCTestCase {
         XCTAssertTrue(instructions.contains("names"))
         XCTAssertTrue(instructions.contains("numbers"))
         XCTAssertTrue(instructions.contains("uncertainty"))
+        XCTAssertTrue(instructions.contains("already natural"))
         XCTAssertFalse(instructions.contains("authoritative Chinese"))
     }
 
@@ -45,6 +46,7 @@ final class OpenAIProviderTests: XCTestCase {
         let result = try await provider.analyze(input)
         XCTAssertEqual(result.english, "I can send it tomorrow.")
         XCTAssertEqual(result.chineseMeaning, "我明天可以发给你。")
+        XCTAssertTrue(result.worthChanging)
         let requests = await transport.requests
         XCTAssertEqual(requests.count, 1)
         XCTAssertEqual(requests[0].value(forHTTPHeaderField: "Authorization"), "Bearer secret-test-key")

@@ -1,0 +1,11 @@
+# Manual test pass
+
+1. Launch `build/SenseDraft.app`. In the first-launch Permissions tab, grant Accessibility access in macOS System Settings and click **Check again**. If macOS does not recognize the app after rebuilding, remove the old SenseDraft entry and add the current app bundle again.
+2. In AI settings, choose **API Key**, enter a valid OpenAI key, choose a model and English locale, and click **Save AI settings**. Keep the ChatGPT plan sign-in test separate; it requires an eligible account and browser authorization.
+3. In Shortcuts, record Analyze and Replace, save them, relaunch, and confirm they persisted. Click **Restore defaults** and confirm `⌥⌘E` and `⌥⌘Return` work.
+4. In TextEdit plain text mode, type an awkward English sentence. Keep the cursor in that field and press Analyze without selecting text. Confirm the whole field appears in the panel, with improved English and Chinese meaning; typing alone should not open the panel or send a request.
+5. Edit the Chinese meaning and click **Regenerate from Chinese**. Confirm the candidate updates while TextEdit remains unchanged. Press Replace and verify the complete field changes once.
+6. Analyze again, then change the original text or focus a different external field before Replace. Confirm replacement is refused. Press Escape to dismiss the panel and confirm the source stays unchanged.
+7. Repeat the read, copy, and replace checks in Safari and Chrome textareas, contenteditable editors, and your main messaging editor. Record observed support in `compatibility.md`. When direct replacement fails, use **Copy English**.
+8. Test an already natural English sentence, an empty field, a mixed Chinese and English field, and a password field. Confirm no unwanted replacement occurs. Check rich text warning when the source has mixed formatting.
+9. If you use ChatGPT plan, select it in AI settings, authorize in your browser, choose an available model, save, and run one analysis. If the browser shows **Invalid authorization step**, record the full diagnostics from that page for the OAuth follow-up. Also test **Cancel sign-in** and **Disconnect**.
