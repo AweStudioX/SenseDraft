@@ -1,0 +1,22 @@
+# SenseDraft
+
+SenseDraft is a macOS menu bar app for improving English while checking the intended meaning in Chinese. It reads the entire focused input when you press Analyze, so you do not need to select text. It never sends text merely because you type.
+
+## Build and launch
+
+Requires macOS 14 or newer and Xcode 26 with Swift 6. Run:
+
+```sh
+./Scripts/build-app.sh
+open build/SenseDraft.app
+```
+
+The first launch opens the Permissions guide. In **AI**, choose either an OpenAI API key or **ChatGPT plan**. The latter opens OpenAI's authorization page in your browser and requires an eligible account; choose a model from that account's catalog after connecting. Set the English locale there. Credentials are stored in macOS Keychain. In **Shortcuts**, record and save Analyze and Replace, or click **Restore defaults** for `⌘⌥E` and `⌘⌥Return`.
+
+Focus an editable English input field and press Analyze. Review the improved English and Chinese interpretation. If the meaning is wrong, edit the Chinese and click **Regenerate from Chinese**. Press Replace to write the reviewed English back to the original field. If the original has changed, replacement is refused. You can copy the English from the panel when an editor does not support direct replacement.
+
+## Privacy and current scope
+
+SenseDraft reads the focused field only after Analyze. The input is sent to the selected OpenAI model for analysis; input and output are not saved to a history. Credentials remain in Keychain. The ChatGPT plan path follows OpenAI's Sign in with ChatGPT flow and is subject to the selected account's eligibility and limits. It has automated contract tests but still needs a manual sign-in and live request on an eligible account before it can be called verified.
+
+Cross-app replacement depends on each editor's Accessibility implementation. Password and protected fields are excluded. See `docs/compatibility.md` for tested apps.

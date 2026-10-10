@@ -31,6 +31,8 @@
 | `Sources/SenseDraftMac/GlobalHotkeys.swift` | Carbon shortcut registration and conflict errors |
 | `Sources/SenseDraftMac/Keychain.swift` | Per-user API key storage |
 | `Sources/SenseDraftMac/Panel.swift` | AppKit panel hosting SwiftUI content |
+| `Sources/SenseDraftMac/Settings.swift` | General, AI, Shortcuts, and Permissions settings window |
+| `Sources/SenseDraftMac/PermissionGuide.swift` | Accessibility status, prompt, and System Settings handoff |
 | `Sources/SenseDraftMac/SenseDraftApp.swift` | Menu bar lifecycle and wiring |
 | `Tests/SenseDraftCoreTests/*` | Pure behavior and provider decoding tests |
 | `Scripts/build-app.sh` and `Resources/Info.plist` | Bundle executable as `SenseDraft.app` for Accessibility consent |
@@ -82,12 +84,13 @@
 
 ### Task 5: Global shortcuts, panel, and app lifecycle
 
-**Files:** Create `Sources/SenseDraftMac/GlobalHotkeys.swift`, `Sources/SenseDraftMac/Panel.swift`, `Sources/SenseDraftMac/SenseDraftApp.swift`, `Sources/SenseDraftMac/Keychain.swift`, `Tests/SenseDraftCoreTests/HotkeySettingsTests.swift`, and `Sources/SenseDraftCore/HotkeySettings.swift`.
+**Files:** Create `Sources/SenseDraftMac/GlobalHotkeys.swift`, `Sources/SenseDraftMac/Panel.swift`, `Sources/SenseDraftMac/SenseDraftApp.swift`, `Sources/SenseDraftMac/Keychain.swift`, `Sources/SenseDraftMac/Settings.swift`, `Sources/SenseDraftMac/PermissionGuide.swift`, `Tests/SenseDraftCoreTests/HotkeySettingsTests.swift`, and `Sources/SenseDraftCore/HotkeySettings.swift`.
 
 **Interfaces:** `HotkeySettings` rejects identical Analyze/Replace shortcuts; `GlobalHotkeys` registers them and reports OS conflicts; panel callbacks `onRegenerate(chinese: String)` and `onCopy()`.
 
 - [ ] Write a test for default shortcut separation and conflict rejection; run it and verify red.
 - [ ] Implement `HotkeySettings`. Register shortcuts with Carbon `RegisterEventHotKey` and unregister on shutdown. Add a menu bar item to open settings and quit. Build an AppKit panel with SwiftUI text controls and visible source, English, Chinese interpretation, ambiguity, loading/error, regeneration, and copy states. Keep the captured external field reference when panel gains focus.
+- [ ] Add a settings window with General, AI, Shortcuts, and Permissions tabs. Persist provider, model, locale, and shortcut choices in user defaults; store the API Key only in Keychain. Detect duplicate or unregistrable shortcuts and retain the previous active shortcuts on failure. Show permission status, request access, and open macOS Accessibility settings. Present the guide on first launch.
 - [ ] Wire Analyze to `captureFocused` then `LanguageService.analyze`; wire Replace to `replaceIfUnchanged`; wire regeneration to a new request using edited Chinese. Store the user's API key in Keychain and make provider identity visible. Run `swift test` and `swift build`; expect pass. Manually verify both shortcuts in TextEdit. Commit as `feat: add SenseDraft menu bar workflow`.
 
 ### Task 6: App bundle and compatibility gate

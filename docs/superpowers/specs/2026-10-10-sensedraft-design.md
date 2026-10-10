@@ -48,6 +48,10 @@ The app supports two credential paths behind this interface: a user supplied Ope
 
 An AppKit panel, with SwiftUI content where practical, displays the candidate and lets the user edit the Chinese interpretation and English candidate. A hotkey manager owns Analyze and Replace across apps, allows reassignment, and detects conflicts. Panel placement uses the focused field's bounds when available, falling back to a predictable position in the frontmost window. Loading, ambiguity, stale-target, and unsupported-field states have distinct messages.
 
+### Settings and permission onboarding
+
+The menu bar opens a persistent settings window with General, AI, Shortcuts, and Permissions sections. AI settings include provider selection, an API Key stored in Keychain, model choice, and English locale. Shortcut settings record Analyze and Replace key combinations, reject duplicates or OS conflicts, show the active combinations, and restore both defaults with one action. Permissions explains why Accessibility access is required, displays the current authorization state, provides a button to request it, and opens the matching macOS System Settings pane. On first launch, the app presents this permission guide before the first Analyze attempt; denial leaves settings usable and does not read any field.
+
 ### Replacement adapter
 
 Replacement first verifies source application, target element, editability, and exact source value. It attempts the least disruptive supported text operation for that editor, then reads back the field to confirm the intended value. If write or verification fails, it reports the outcome and keeps the candidate available for copy. It must not automatically retry via a different operation after an uncertain write, because that could duplicate text.
@@ -73,6 +77,7 @@ Accessibility permission is requested with a plain explanation of why current-fi
 5. Protected fields are ignored. Failed read, write, network, and auth flows never silently modify source.
 6. User tests cover native AppKit fields, Safari and Chrome `textarea`/contenteditable, and representative messaging editors. Results are documented per app and editor type; unsupported cases expose copy rather than claiming universal replacement.
 7. API key and eligible ChatGPT plan sign-in each complete a real analysis request, with visible handling of denied access and exhausted usage.
+8. First launch and settings explain Accessibility permission and expose current status, request, and System Settings controls. AI and shortcut settings persist across relaunches; credentials remain in Keychain.
 
 ## References
 
