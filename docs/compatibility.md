@@ -9,3 +9,4 @@ The table records direct observations from the packaged `SenseDraft.app`. A succ
 | Chrome textarea | Pending manual test | Pending manual test | Browser editor |
 | Safari/Chrome contenteditable | Pending manual test | Pending manual test | Rich text may need copy fallback |
 | Messaging input | Pending manual test | Pending manual test | Target app to be selected |
+| Sublime Text editor | No | No | In the observed Sublime window, Accessibility exposed the window and title but no readable focused editor value. SenseDraft now reports this explicitly. A Sublime plugin would be needed for direct integration. |

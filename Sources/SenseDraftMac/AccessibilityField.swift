@@ -6,6 +6,7 @@ enum AccessibilityError: Error {
     case permissionDenied
     case noFocusedField
     case unavailable
+    case unsupportedRead(String)
     case stale
     case unsupportedWrite
     case writeFailed
@@ -30,7 +31,13 @@ struct AccessibilityField {
         guard pid != ProcessInfo.processInfo.processIdentifier else { throw AccessibilityError.noFocusedField }
         let role = try stringValue(element, kAXRoleAttribute)
         let subrole = try? stringValue(element, kAXSubroleAttribute)
-        let source = try stringValue(element, kAXValueAttribute)
+        guard subrole != kAXSecureTextFieldSubrole else { throw FieldError.protected }
+        guard role == kAXTextFieldRole || role == kAXTextAreaRole else {
+            throw AccessibilityError.unsupportedRead(appID)
+        }
+        let source: String
+        do { source = try stringValue(element, kAXValueAttribute) }
+        catch { throw AccessibilityError.unsupportedRead(appID) }
         var settable: DarwinBoolean = false
         let editable = AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable) == .success && settable.boolValue
         try FieldPolicy.validate(role: role, protected: subrole == kAXSecureTextFieldSubrole, editable: editable, value: source)

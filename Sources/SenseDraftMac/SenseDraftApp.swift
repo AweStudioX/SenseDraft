@@ -118,6 +118,7 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
             settingsWindow.show(tab: .permissions)
             settings.message = "Grant Accessibility access in the Permissions tab, then try again."
         } catch {
+            review.model.captureFailed = true
             review.model.source = ""
             review.model.english = ""
             review.model.chinese = ""
@@ -137,6 +138,7 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         let selectedPlanModel = settings.planModel
         requestTask?.cancel()
         review.model.isReady = false
+        review.model.captureFailed = false
         review.model.reason = nil
         do {
             let input = try AnalysisInput(source: field.source, locale: settings.locale, chineseIntent: chineseIntent)
@@ -278,6 +280,10 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
 
     private func captureErrorMessage(_ error: Error) -> String {
         switch error {
+        case AccessibilityError.unsupportedRead(let appID) where appID == "com.sublimetext.4":
+            "Sublime Text does not expose this editor's text through macOS Accessibility. SenseDraft cannot analyze it from the global shortcut yet; no text was sent."
+        case AccessibilityError.unsupportedRead:
+            "This editor does not expose its text through macOS Accessibility. No text was sent. Try a standard text field."
         case FieldError.protected: "Protected fields cannot be analyzed."
         case FieldError.empty: "Type English in the focused field, then press Analyze."
         case FieldError.nonEnglish: "This version analyzes English input only."

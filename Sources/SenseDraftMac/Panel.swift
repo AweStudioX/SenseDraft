@@ -10,6 +10,7 @@ final class ReviewModel: ObservableObject {
     @Published var reason: String?
     @Published var worthChanging = true
     @Published var isReady = false
+    @Published var captureFailed = false
     @Published var richTextRisk = false
     @Published var allowFormattingLoss = false
     @Published var replaceShortcutText = "⌥⌘↩"
@@ -40,6 +41,7 @@ final class ReviewPanel: NSObject, NSWindowDelegate {
     }
 
     func show(near fieldBounds: CGRect? = nil) {
+        panel.setContentSize(NSSize(width: 560, height: model.captureFailed ? 230 : 510))
         if let fieldBounds, let screen = NSScreen.main {
             let width = panel.frame.width
             let height = panel.frame.height
@@ -67,6 +69,16 @@ private struct ReviewView: View {
                 Spacer()
                 if model.isLoading { ProgressView().controlSize(.small) }
             }
+            if model.captureFailed {
+                Label("Could not read the focused editor", systemImage: "text.badge.xmark")
+                    .font(.headline)
+                Text(model.message).font(.callout).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                HStack {
+                    Spacer()
+                    Button("Close") { model.onClose?() }
+                }
+            } else {
             if !model.providerLabel.isEmpty {
                 Text(model.providerLabel).font(.caption).foregroundStyle(.secondary)
             }
@@ -111,6 +123,7 @@ private struct ReviewView: View {
                     .disabled(!model.isReady || model.english.isEmpty)
                 Spacer()
                 Text("Replace: \(model.replaceShortcutText)").font(.caption).foregroundStyle(.secondary)
+            }
             }
         }
         .padding(18)
