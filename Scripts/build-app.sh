@@ -9,9 +9,35 @@ swift build --disable-sandbox
 
 bundle="$project_dir/build/SenseDraft.app"
 mkdir -p "$bundle/Contents/MacOS"
-cp "$project_dir/.build/debug/SenseDraftMac" "$bundle/Contents/MacOS/SenseDraftMac"
-cp "$project_dir/Resources/Info.plist" "$bundle/Contents/Info.plist"
-codesign --force --sign - --timestamp=none "$bundle"
+binary="$project_dir/.build/debug/SenseDraftMac"
+packaged_binary="$bundle/Contents/MacOS/SenseDraftMac"
+packaged_plist="$bundle/Contents/Info.plist"
+metadata_dir="$bundle/Contents/Resources"
+source_hash_file="$metadata_dir/source-binary.sha256"
+identity_file="$metadata_dir/signing-identity.txt"
+identity="${SENSEDRAFT_SIGN_IDENTITY:--}"
+source_hash="$(shasum -a 256 "$binary" | cut -d ' ' -f 1)"
+
+# Leave an unchanged app bundle untouched. With ad hoc signing, the designated
+# requirement is a code hash, so every changed binary needs a fresh macOS
+# Accessibility grant. Re-signing needlessly makes development harder.
+if [[ -f "$packaged_binary" && -f "$packaged_plist" && -f "$source_hash_file" && -f "$identity_file" ]] &&
+   [[ "$(cat "$source_hash_file")" == "$source_hash" ]] &&
+   [[ "$(cat "$identity_file")" == "$identity" ]] &&
+   cmp -s "$project_dir/Resources/Info.plist" "$packaged_plist" &&
+   codesign --verify --deep --strict "$bundle" >/dev/null 2>&1; then
+    echo "Unchanged app bundle; preserving its existing signature."
+else
+    cp "$binary" "$packaged_binary"
+    cp "$project_dir/Resources/Info.plist" "$packaged_plist"
+    mkdir -p "$metadata_dir"
+    printf '%s\n' "$source_hash" > "$source_hash_file"
+    printf '%s\n' "$identity" > "$identity_file"
+    codesign --force --sign "$identity" --timestamp=none "$bundle"
+    if [[ "$identity" == "-" ]]; then
+        echo "Ad hoc signature changed: macOS may require a fresh Accessibility grant for this build." >&2
+    fi
+fi
 test -x "$bundle/Contents/MacOS/SenseDraftMac"
 test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$bundle/Contents/Info.plist")" = "com.kaaaaai.SenseDraft"
 echo "$bundle"

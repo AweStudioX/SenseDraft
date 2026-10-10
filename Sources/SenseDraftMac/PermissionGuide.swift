@@ -15,6 +15,10 @@ enum PermissionGuide {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else { return }
         NSWorkspace.shared.open(url)
     }
+
+    static func revealCurrentApp() {
+        NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
+    }
 }
 
 struct PermissionSettingsView: View {
@@ -29,7 +33,7 @@ struct PermissionSettingsView: View {
             Label(authorized ? "Access granted" : "Access needed", systemImage: authorized ? "checkmark.circle.fill" : "exclamationmark.circle")
                 .foregroundStyle(authorized ? .green : .orange)
             if !authorized {
-                Text("If SenseDraft is already enabled in System Settings, remove its old entry, add the current SenseDraft.app again, then restart SenseDraft. Rebuilding a locally signed app can invalidate its earlier grant.")
+                Text("This build uses an ad hoc signature. After the app code changes, macOS may keep an old SenseDraft switch on while denying the new build. Remove the old entry, reveal and add this exact app, then quit and reopen it.")
                     .font(.callout).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -38,6 +42,7 @@ struct PermissionSettingsView: View {
                 Button("Open System Settings") { PermissionGuide.openSystemSettings() }
                 Button("Check again") { refresh() }
             }
+            Button("Reveal this app in Finder") { PermissionGuide.revealCurrentApp() }
             Spacer()
         }
         .padding(24)
