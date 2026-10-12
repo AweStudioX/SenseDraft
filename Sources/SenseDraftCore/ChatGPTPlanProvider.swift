@@ -3,6 +3,7 @@ import Foundation
 public enum ChatGPTPlanError: Error, Equatable {
     case httpStatus(Int, String?)
     case invalidResponse
+    case incomplete
     case noModels
 }
 
@@ -21,10 +22,12 @@ public struct PlanModel: Decodable, Equatable, Sendable {
 public struct ChatGPTPlanProvider: LanguageService {
     private let token: String
     private let model: String
+    private let transport: any HTTPTransport
 
-    public init(token: String, model: String) {
+    public init(token: String, model: String, transport: any HTTPTransport = URLSessionTransport()) {
         self.token = token
         self.model = model
+        self.transport = transport
     }
 
     public func listModels() async throws -> [PlanModel] {
@@ -39,21 +42,11 @@ public struct ChatGPTPlanProvider: LanguageService {
 
     public func analyze(_ input: AnalysisInput) async throws -> AnalysisResult {
         let request = try makeRequest(input)
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
-        guard let response = response as? HTTPURLResponse else { throw ChatGPTPlanError.invalidResponse }
+        let (data, response) = try await transport.send(request)
         guard (200..<300).contains(response.statusCode) else {
-            var errorData = Data()
-            for try await byte in bytes {
-                if errorData.count >= 8192 { break }
-                errorData.append(byte)
-            }
-            throw ChatGPTPlanError.httpStatus(response.statusCode, Self.errorCode(from: errorData))
+            throw ChatGPTPlanError.httpStatus(response.statusCode, Self.errorCode(from: data))
         }
-        var stream = ""
-        for try await line in bytes.lines {
-            stream += line + "\n"
-        }
-        return try Self.parse(stream, source: input.source)
+        return try Self.parse(data, source: input.source)
     }
 
     public func makeRequest(_ input: AnalysisInput) throws -> URLRequest {
@@ -72,7 +65,7 @@ public struct ChatGPTPlanProvider: LanguageService {
         let body: [String: Any] = [
             "model": model,
             "store": false,
-            "stream": true,
+            "stream": false,
             "instructions": AnalysisPrompt.instructions(for: input),
             "input": [["role": "user", "content": input.source]],
             "text": ["format": ["type": "json_schema", "name": "sensedraft_analysis", "schema": schema, "strict": true]]
@@ -85,8 +78,15 @@ public struct ChatGPTPlanProvider: LanguageService {
         return request
     }
 
-    public static func parse(_ stream: String, source: String? = nil) throws -> AnalysisResult {
-        let text = try StreamDecoder.consume(stream)
+    public static func parse(_ data: Data, source: String? = nil) throws -> AnalysisResult {
+        guard let response = try? JSONDecoder().decode(PlanResponse.self, from: data) else {
+            throw ChatGPTPlanError.invalidResponse
+        }
+        guard response.status == "completed" else { throw ChatGPTPlanError.incomplete }
+        guard let text = response.output.compactMap(\.content).flatMap({ $0 })
+            .first(where: { $0.type == "output_text" })?.text else {
+            throw ChatGPTPlanError.invalidResponse
+        }
         guard let data = text.data(using: .utf8),
               let output = try? JSONDecoder().decode(Payload.self, from: data) else {
             throw ChatGPTPlanError.invalidResponse
@@ -99,6 +99,20 @@ public struct ChatGPTPlanProvider: LanguageService {
               let error = body["error"] as? [String: Any] else { return nil }
         return error["code"] as? String
     }
+}
+
+private struct PlanResponse: Decodable {
+    let status: String
+    let output: [PlanOutputItem]
+}
+
+private struct PlanOutputItem: Decodable {
+    let content: [PlanOutputContent]?
+}
+
+private struct PlanOutputContent: Decodable {
+    let type: String
+    let text: String?
 }
 
 private struct ModelEnvelope: Decodable {
