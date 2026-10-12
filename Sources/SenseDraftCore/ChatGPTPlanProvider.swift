@@ -3,7 +3,6 @@ import Foundation
 public enum ChatGPTPlanError: Error, Equatable {
     case httpStatus(Int, String?)
     case invalidResponse
-    case incomplete
     case noModels
 }
 
@@ -65,7 +64,7 @@ public struct ChatGPTPlanProvider: LanguageService {
         let body: [String: Any] = [
             "model": model,
             "store": false,
-            "stream": false,
+            "stream": true,
             "instructions": AnalysisPrompt.instructions(for: input),
             "input": [["role": "user", "content": input.source]],
             "text": ["format": ["type": "json_schema", "name": "sensedraft_analysis", "schema": schema, "strict": true]]
@@ -79,14 +78,7 @@ public struct ChatGPTPlanProvider: LanguageService {
     }
 
     public static func parse(_ data: Data, source: String? = nil) throws -> AnalysisResult {
-        guard let response = try? JSONDecoder().decode(PlanResponse.self, from: data) else {
-            throw ChatGPTPlanError.invalidResponse
-        }
-        guard response.status == "completed" else { throw ChatGPTPlanError.incomplete }
-        guard let text = response.output.compactMap(\.content).flatMap({ $0 })
-            .first(where: { $0.type == "output_text" })?.text else {
-            throw ChatGPTPlanError.invalidResponse
-        }
+        let text = try StreamDecoder.consume(String(decoding: data, as: UTF8.self))
         guard let data = text.data(using: .utf8),
               let output = try? JSONDecoder().decode(Payload.self, from: data) else {
             throw ChatGPTPlanError.invalidResponse
@@ -99,20 +91,6 @@ public struct ChatGPTPlanProvider: LanguageService {
               let error = body["error"] as? [String: Any] else { return nil }
         return error["code"] as? String
     }
-}
-
-private struct PlanResponse: Decodable {
-    let status: String
-    let output: [PlanOutputItem]
-}
-
-private struct PlanOutputItem: Decodable {
-    let content: [PlanOutputContent]?
-}
-
-private struct PlanOutputContent: Decodable {
-    let type: String
-    let text: String?
 }
 
 private struct ModelEnvelope: Decodable {

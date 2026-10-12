@@ -21,7 +21,7 @@ SenseDraft keeps the original English when it is already natural, and explains w
 
 ## Privacy and current scope
 
-SenseDraft reads the focused field only after Analyze. The input is sent to the selected OpenAI model for analysis; input and output are not saved to a history. Credentials remain in Keychain. The ChatGPT plan path follows OpenAI's Sign in with ChatGPT flow and is subject to the selected account's eligibility and limits. It has automated contract tests but still needs a manual sign-in and live request on an eligible account before it can be called verified.
+SenseDraft reads the focused field only after Analyze. The input is sent to the selected OpenAI model for analysis; input and output are not saved to a history. Credentials remain in Keychain. The ChatGPT plan path follows OpenAI's Sign in with ChatGPT flow and is subject to the selected account's eligibility and limits. Its current streaming Responses request and result parser passed a live request with the connected account on 2026-10-12; the full app interaction still needs a manual pass.
 
 Cross-app replacement depends on each editor's Accessibility or standard keyboard command behavior. Password and protected fields are excluded. In editors that expose only a window to Accessibility, a copied source cannot always be proven to be an editable input; check the source shown in the panel before using Replace. See `docs/compatibility.md` for the verification status of each app.
 

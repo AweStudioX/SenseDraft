@@ -295,8 +295,18 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
             }
             return "ChatGPT request was rejected (HTTP \(status)\(code.map { ", \($0)" } ?? "")). Check your account in Settings → AI."
         }
-        if case ChatGPTPlanError.incomplete = error {
+        if case StreamDecoderError.failed(let code) = error,
+           code == "subscription_sharing_usage_limit_exceeded" || code == "subscription_sharing_usage_unavailable" {
+            return "ChatGPT plan usage is unavailable or at its limit. Review ChatGPT usage in Settings → AI."
+        }
+        if case StreamDecoderError.incomplete = error {
             return "ChatGPT stopped before finishing this analysis. Try again."
+        }
+        if case StreamDecoderError.interrupted = error {
+            return "The ChatGPT response ended before completion. Try again."
+        }
+        if case StreamDecoderError.invalidEvent = error {
+            return "ChatGPT returned an unreadable response event. Try again."
         }
         if case ChatGPTPlanError.invalidResponse = error {
             return "ChatGPT returned an unreadable result. Try again or use an API key in Settings → AI."
