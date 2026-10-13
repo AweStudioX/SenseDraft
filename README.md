@@ -10,11 +10,7 @@
 
 <p align="center"><strong>Check the meaning. Then write the English.</strong></p>
 
-<p align="center">先确认原意，再写出自然英文。</p>
-
 SenseDraft is an open-source macOS menu bar app for people who write in English but think in Chinese. Press a shortcut in the text field you are already using: it improves English or translates Chinese into natural English, then shows a Chinese interpretation so you can check whether the result says what you meant. Nothing is sent just because you type, and the app never replaces text before you ask it to.
-
-SenseDraft 是一款 macOS 菜单栏写作工具。在当前输入框按快捷键，即可润色英文或把中文写成自然英文，并通过中文释义核对意思。你可以修改释义后重新生成，确认结果再替换原文。
 
 > **Project status:** Early development. Build from source; no signed download or universal editor compatibility is promised yet. See [editor compatibility](docs/compatibility.md) and the [manual test checklist](docs/manual-testing.md).
 
