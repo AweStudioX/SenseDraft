@@ -48,7 +48,7 @@ open build/SenseDraft.app
 
 On first launch, follow the **Permissions** guide to grant Accessibility access. In **Settings → AI**, choose an OpenAI API key or **ChatGPT plan**, select a model and English locale, and save. ChatGPT plan usage requires an eligible account and is subject to that account's limits; see the [connection guide](docs/chatgpt-plan.md). API credentials are stored in Keychain.
 
-The default shortcuts are **⌘⌥E** for Analyze and **⌘⌥Return** for Replace. You can change or restore them in **Settings → Shortcuts**.
+The default shortcuts are **⌘⌥E** for Analyze and **⌘⌥Return** for Replace. You can change or restore them in **Settings → Shortcuts**. Press **Escape** or **⌘W** to close Settings; when recording a shortcut, Escape cancels the recording first.
 
 ## Use it in an editor
 

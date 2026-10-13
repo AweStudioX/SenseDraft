@@ -173,6 +173,25 @@ final class AppSettings: ObservableObject {
 }
 
 @MainActor
+private final class SettingsClosingWindow: NSWindow {
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown {
+            let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+            if modifiers == .command && event.charactersIgnoringModifiers?.lowercased() == "w" {
+                (firstResponder as? RecorderView)?.cancelRecording()
+                close()
+                return
+            }
+            if event.keyCode == 53 && modifiers.isEmpty && (firstResponder as? RecorderView)?.isRecording != true {
+                close()
+                return
+            }
+        }
+        super.sendEvent(event)
+    }
+}
+
+@MainActor
 final class SettingsWindow {
     private var window: NSWindow?
     private let settings: AppSettings
@@ -191,7 +210,7 @@ final class SettingsWindow {
     func show(tab: SettingsTab? = nil) {
         if let tab { settings.selectedTab = tab }
         if window == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 430), styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
+            let window = SettingsClosingWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 430), styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
             window.title = "SenseDraft Settings"
             window.isReleasedWhenClosed = false
             window.center()
@@ -366,6 +385,7 @@ private final class RecorderView: NSView {
     var onBegin: (() -> Void)?
     var onEnd: (() -> Void)?
     private var recording = false
+    var isRecording: Bool { recording }
 
     override var acceptsFirstResponder: Bool { true }
     override var intrinsicContentSize: NSSize { NSSize(width: 190, height: 30) }
@@ -393,9 +413,7 @@ private final class RecorderView: NSView {
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 {
-            recording = false
-            onEnd?()
-            needsDisplay = true
+            cancelRecording()
             return
         }
         var modifiers: UInt32 = 0
@@ -406,6 +424,13 @@ private final class RecorderView: NSView {
         guard modifiers & UInt32(cmdKey | optionKey | controlKey) != 0 else { NSSound.beep(); return }
         recording = false
         onChange?(Shortcut(keyCode: UInt32(event.keyCode), modifiers: modifiers))
+        onEnd?()
+        needsDisplay = true
+    }
+
+    func cancelRecording() {
+        guard recording else { return }
+        recording = false
         onEnd?()
         needsDisplay = true
     }
