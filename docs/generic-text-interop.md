@@ -21,8 +21,10 @@ The keyboard path begins only on Analyze. It does not watch keystrokes, use OCR,
 
 1. The user reviews the English and Chinese, then focuses the original editor and presses Replace. The review panel remains available.
 2. Check the saved process and window identity, plus focused element identity where available. Re-read the entire source through the same capability path and compare exact text with the original snapshot. A mismatch cancels without writing.
-3. Prefer direct `AXValue` or writable selected-text APIs. For a keyboard-only target, Select All, place the candidate temporarily on the clipboard, and Paste once. The user has explicitly invoked Replace, and the panel must warn that rich formatting may be lost.
+3. Use direct `AXValue` for single-line text fields. For multiline text areas and keyboard-only targets, return focus to the editor, Select All, verify the copied source, place the candidate temporarily on the clipboard, and Paste once. The user has explicitly invoked Replace, and the panel must warn that rich formatting may be lost. Some editors accept an `AXValue` write but append rather than replace, so `AXValue` settable is insufficient evidence for multiline replacement.
 4. Re-read the target to confirm the candidate. Restore the clipboard only if the temporary value is still owned by SenseDraft. If the write cannot be verified, show an uncertain result and do not retry automatically.
+
+For Chromium contenteditable fields, the Accessibility value can contain trailing zero-width placeholder lines that Select All / Copy omits. Compare these two representations after stripping only that specific trailing placeholder pattern from the Accessibility value. Preserve ordinary trailing newlines and internal zero-width characters; all other mismatches still cancel replacement.
 
 Window identity and exact text checks substantially reduce wrong-target writes. When an editor exposes no stable element identity, replacement is allowed only while that same application/window is again frontmost and the source text matches exactly. A window containing two identical editors remains an edge case; the UI must make the active target clear. The product cannot promise identical behavior across arbitrary terminal, remote-desktop, game, or protected inputs.
 
@@ -36,5 +38,6 @@ The code now implements the two read paths, clipboard snapshot/ownership checks,
 - [Bob repository](https://github.com/ripperhe/Bob): current app is not open source.
 - [Apple Accessibility text range](https://developer.apple.com/documentation/applicationservices/kaxstringforrangeparameterizedattribute) and [parameterized attribute API](https://developer.apple.com/documentation/applicationservices/1461203-axuielementcopyparameterizedattr): another direct read path when `AXValue` is unavailable.
 - [Apple pasteboard change count](https://developer.apple.com/documentation/appkit/nspasteboard/changecount): ownership check before restoration.
+- [Electron macOS Accessibility guidance](https://www.electronjs.org/docs/latest/tutorial/accessibility) and [Electron text-range issue #36337](https://github.com/electron/electron/issues/36337): Chromium-based desktop editors can expose text and selection through AX differently from native editors.
 - [Inklet](https://github.com/wanming/inklet) and [TypeTide](https://github.com/everettjf/TypeTide): independent application-agnostic Accessibility plus clipboard fallback designs.
 - [Sublime selection documentation](https://www.sublimetext.com/docs/multiple_selection_with_the_keyboard.html): Undo Selection is available on macOS, though it is not a universal macOS command.

@@ -22,9 +22,12 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        ReplacementDiagnostics.ready()
+        settings.refreshStoredCredentials()
         setupMenuBar()
         review.model.onRegenerate = { [weak self] in self?.regenerate() }
         review.model.onCopy = { [weak self] in self?.copyEnglish() }
+        review.model.onReplace = { [weak self] in self?.replace() }
         review.model.onClose = { [weak self] in self?.review.close() }
         review.onDismiss = { [weak self] in self?.discardSession() }
         keyboardLayoutObserver = NotificationCenter.default.addObserver(
@@ -48,7 +51,12 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupMenuBar() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.title = "SD"
+        if let icon = menuBarIcon() {
+            item.button?.image = icon
+            item.button?.imagePosition = .imageOnly
+        } else {
+            item.button?.title = "SD"
+        }
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "SenseDraft Settings…", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(.separator())
@@ -56,6 +64,21 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         menu.items.forEach { $0.target = self }
         item.menu = menu
         statusItem = item
+    }
+
+    private func menuBarIcon() -> NSImage? {
+        guard let url = Bundle.main.url(forResource: "StatusBar", withExtension: "png"),
+              let source = NSImage(contentsOf: url) else { return nil }
+        let size = NSSize(width: 18, height: 18)
+        // The supplied artwork has generous transparent padding. Its subject is
+        // centered within this square; fit that square to the menu bar glyph.
+        let artwork = NSRect(x: 264, y: 252, width: 830, height: 830)
+        let icon = NSImage(size: size, flipped: false) { destination in
+            source.draw(in: destination, from: artwork, operation: .sourceOver, fraction: 1)
+            return true
+        }
+        icon.isTemplate = true
+        return icon
     }
 
     @objc private func openSettings() { settingsWindow.show() }
@@ -135,12 +158,21 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         review.model.chinese = ""
         review.model.ambiguity = nil
         review.model.reason = nil
+        review.model.lastGeneratedChinese = ""
         review.model.richTextRisk = field.richTextRisk
         review.model.allowFormattingLoss = false
         review.model.providerLabel = settings.provider == .chatGPTPlan ? "Using ChatGPT plan" : "Using OpenAI API Key"
-        review.model.captureNotice = field.usedKeyboardFallback
-            ? "Keyboard capture: caret may move to the end. Return to the original field before Replace."
-            : ""
+        switch field {
+        case .keyboard:
+            review.model.captureNotice = "Keyboard capture: caret may move to the end. Return to the original field before Replace."
+        case .accessibility where field.usedKeyboardFallback:
+            review.model.captureNotice = "This editor uses keyboard replacement. SenseDraft will refocus the original input before replacing."
+        default:
+            review.model.captureNotice = ""
+        }
+        review.model.usedKeyboardFallback = field.usedKeyboardFallback
+        if case .accessibility = field { review.model.canRestoreFocus = true }
+        else { review.model.canRestoreFocus = false }
         review.model.message = "Analyzing…"
         review.show(near: field.bounds)
         requestAnalysis(chineseIntent: nil)
@@ -156,7 +188,9 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func regenerate() {
-        requestAnalysis(chineseIntent: review.model.chinese)
+        let editedChinese = review.model.chinese.trimmingCharacters(in: .whitespacesAndNewlines)
+        let chineseIntent = editedChinese != review.model.lastGeneratedChinese ? editedChinese : nil
+        requestAnalysis(chineseIntent: chineseIntent)
     }
 
     private func requestAnalysis(chineseIntent: String?) {
@@ -169,7 +203,8 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         review.model.captureFailed = false
         review.model.reason = nil
         do {
-            let input = try AnalysisInput(source: field.source, locale: settings.locale, chineseIntent: chineseIntent)
+            let input = try AnalysisInput(source: field.source, locale: settings.locale,
+                                          chineseIntent: chineseIntent, preferences: settings.writingPreferences)
             let newSession = AnalysisSession(snapshot: TargetSnapshot(appID: field.appID, elementID: String(field.pid), source: field.source))
             session = newSession
             review.model.isLoading = true
@@ -200,14 +235,15 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
                     guard !Task.isCancelled, self.session?.generation == newSession.generation else { return }
                     self.review.model.english = result.english
                     self.review.model.chinese = result.chineseMeaning
+                    self.review.model.lastGeneratedChinese = result.chineseMeaning
                     self.review.model.ambiguity = result.ambiguity
                     self.review.model.reason = result.reason
                     self.review.model.worthChanging = result.worthChanging
                     self.review.model.isReady = true
                     self.review.model.message = result.worthChanging
-                        ? (field.usedKeyboardFallback
+                        ? (field.usedKeyboardFallback && !self.review.model.canRestoreFocus
                             ? "Return to the original field, then press your Replace shortcut."
-                            : "Review the meaning, then press your Replace shortcut.")
+                            : "")
                         : "Already natural — no change suggested."
                     self.review.model.isLoading = false
                 } catch {
@@ -237,6 +273,7 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         }
         review.model.isLoading = true
         isReplacing = true
+        ReplacementDiagnostics.begin(route: field.usedKeyboardFallback ? "keyboard" : "accessibility")
         replaceTask = Task { [weak self] in
             guard let self else { return }
             defer {
@@ -246,14 +283,26 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
             }
             do {
                 guard session.snapshot.source == field.source else { throw AccessibilityError.stale }
+                if field.usedKeyboardFallback {
+                    guard KeyboardField.isActiveTarget(field.pid)
+                        || KeyboardField.isActiveTarget(ProcessInfo.processInfo.processIdentifier) else {
+                        throw KeyboardFieldError.notFrontmost
+                    }
+                    self.review.hideForReplacement()
+                    ReplacementDiagnostics.stage("panelHidden")
+                }
                 try await field.replaceIfUnchanged(with: self.review.model.english)
                 guard !Task.isCancelled else { return }
+                ReplacementDiagnostics.stage("writeVerified")
                 self.review.model.message = "Replaced the original input."
                 self.review.model.isReady = false
                 self.captured = nil
                 self.session = nil
+                self.review.close()
+                ReplacementDiagnostics.finish()
             } catch {
                 guard !Task.isCancelled else { return }
+                ReplacementDiagnostics.finish(error: error)
                 self.review.model.message = self.replaceErrorMessage(error)
                 self.review.show(near: field.bounds)
             }
@@ -328,6 +377,7 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         review.model.source = ""
         review.model.english = ""
         review.model.chinese = ""
+        review.model.lastGeneratedChinese = ""
         review.model.message = ""
         review.model.worthChanging = true
         review.model.reason = nil
@@ -336,6 +386,8 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         review.model.allowFormattingLoss = false
         review.model.providerLabel = ""
         review.model.captureNotice = ""
+        review.model.usedKeyboardFallback = false
+        review.model.canRestoreFocus = false
     }
 
     private func captureErrorMessage(_ error: Error) -> String {
@@ -360,7 +412,7 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
             "This editor does not expose its text through macOS Accessibility. No text was sent. Try a standard text field."
         case FieldError.protected: "Protected fields cannot be analyzed."
         case FieldError.empty: "Type English in the focused field, then press Analyze."
-        case FieldError.nonEnglish: "This version analyzes English input only."
+        case FieldError.nonEnglish: "This version supports English and Chinese input."
         case FieldError.notEditable, FieldError.unsupportedRole: "The focused control is not a supported editable text field."
         case AccessibilityError.noFocusedField: "Focus an editable text field, then press Analyze."
         default: "Could not read this input field: \(error)"
@@ -371,11 +423,39 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         switch error {
         case KeyboardFieldError.stale:
             "Return to the original input field and press Replace. Its text and window must still match."
+        case KeyboardFieldError.focusRestoreFailed:
+            "Could not restore focus to the original editor. No keyboard replacement was sent."
+        case KeyboardFieldError.windowChanged:
+            "The active editor window changed before replacement. No keyboard replacement was sent."
+        case KeyboardFieldError.focusedFieldChanged:
+            "The focused input changed before replacement. No keyboard replacement was sent."
+        case KeyboardFieldError.sourceChanged:
+            "The draft text changed before replacement. No replacement was sent."
+        case KeyboardFieldError.noTarget, KeyboardFieldError.unsupportedFocus:
+            "Could not identify the original editor. Focus its text field and press Replace again."
+        case KeyboardFieldError.notFrontmost:
+            "The original app was not frontmost when Replace ran. Click its input field, then press Replace again."
+        case KeyboardFieldError.windowUnavailable:
+            "The editor did not expose a focused or main window for replacement. Copy the English instead."
+        case KeyboardFieldError.clipboardUnavailable:
+            "Could not safely preserve the clipboard for replacement. Copy the English or simplify the clipboard contents before retrying."
+        case KeyboardFieldError.copyFailed:
+            "The editor did not provide its current text through Copy. The original text was not replaced."
+        case KeyboardFieldError.tooLong:
+            "The editor text is too long to verify safely. The original text was not replaced."
+        case KeyboardFieldError.eventFailed:
+            "Could not send the editor's keyboard command. The original text may be unchanged; check it before retrying."
+        case KeyboardFieldError.eventCreationFailed:
+            "macOS could not create a keyboard event for replacement. Check Accessibility permission for the current SenseDraft build."
         case KeyboardFieldError.writeUnverified:
             "Could not verify the keyboard replacement. Check the original field before any retry; the English remains available to copy."
         case KeyboardFieldError.clipboardChanged:
             "The clipboard changed during replacement. Check the original field before retrying."
+        case AccessibilityError.permissionDenied:
+            "Accessibility access is required to verify the original editor before replacement."
         case AccessibilityError.stale: "The original input or focus changed. Analyze again before replacing."
+        case AccessibilityError.writeUnverified:
+            "The editor accepted the replacement, but its updated text could not be confirmed. Check the original field before retrying."
         case AccessibilityError.unsupportedWrite: "This editor does not support direct replacement. Copy the English instead."
         default: "Replacement could not be verified. Copy the English or check the original field before retrying."
         }

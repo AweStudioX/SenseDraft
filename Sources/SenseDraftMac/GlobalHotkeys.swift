@@ -14,6 +14,8 @@ final class GlobalHotkeys {
     private var handlerRef: EventHandlerRef?
     private var analyzeRef: EventHotKeyRef?
     private var replaceRef: EventHotKeyRef?
+    private var pressedIDs: Set<UInt32> = []
+    private var pendingAnalyzePID: pid_t?
     private let onAnalyze: (pid_t?) -> Void
     private let onReplace: () -> Void
 
@@ -25,8 +27,14 @@ final class GlobalHotkeys {
 
     func register(_ settings: HotkeySettings) throws {
         unregister()
-        var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        let status = InstallEventHandler(GetApplicationEventTarget(), Self.eventHandler, 1, &eventType, Unmanaged.passUnretained(self).toOpaque(), &handlerRef)
+        var eventTypes = [
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased))
+        ]
+        let status = eventTypes.withUnsafeMutableBufferPointer { buffer in
+            InstallEventHandler(GetApplicationEventTarget(), Self.eventHandler, buffer.count,
+                                buffer.baseAddress, Unmanaged.passUnretained(self).toOpaque(), &handlerRef)
+        }
         guard status == noErr else { throw HotkeyRegistrationError.eventHandler(status) }
 
         let analyzeID = EventHotKeyID(signature: OSType(0x53445246), id: 1)
@@ -50,11 +58,22 @@ final class GlobalHotkeys {
         analyzeRef = nil
         replaceRef = nil
         handlerRef = nil
+        pressedIDs.removeAll()
+        pendingAnalyzePID = nil
     }
 
-    private func fire(id: UInt32) {
-        if id == 1 { onAnalyze(NSWorkspace.shared.frontmostApplication?.processIdentifier) }
-        if id == 2 { onReplace() }
+    private func fire(id: UInt32, kind: UInt32) {
+        if kind == UInt32(kEventHotKeyPressed) {
+            pressedIDs.insert(id)
+            if id == 1 { pendingAnalyzePID = NSWorkspace.shared.frontmostApplication?.processIdentifier }
+        } else if kind == UInt32(kEventHotKeyReleased), pressedIDs.remove(id) != nil {
+            if id == 1 {
+                onAnalyze(pendingAnalyzePID)
+                pendingAnalyzePID = nil
+            } else if id == 2 {
+                onReplace()
+            }
+        }
     }
 
     private static let eventHandler: EventHandlerUPP = { _, event, context in
@@ -64,12 +83,13 @@ final class GlobalHotkeys {
         guard status == noErr else { return status }
         let instance = Unmanaged<GlobalHotkeys>.fromOpaque(context).takeUnretainedValue()
         let id = hotkeyID.id
+        let kind = GetEventKind(event)
         // The Carbon application event target runs on the main event loop. Capture
         // focus before returning to it, while the source app still owns focus.
         if Thread.isMainThread {
-            MainActor.assumeIsolated { instance.fire(id: id) }
+            MainActor.assumeIsolated { instance.fire(id: id, kind: kind) }
         } else {
-            DispatchQueue.main.async { @MainActor in instance.fire(id: id) }
+            DispatchQueue.main.async { @MainActor in instance.fire(id: id, kind: kind) }
         }
         return noErr
     }

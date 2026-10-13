@@ -10,6 +10,7 @@ enum AccessibilityError: Error {
     case stale
     case unsupportedWrite
     case writeFailed
+    case writeUnverified
 }
 
 @MainActor
@@ -51,7 +52,7 @@ struct AccessibilityField {
             (isSettable(element, kAXSelectedTextRangeAttribute) && isSettable(element, kAXSelectedTextAttribute))
         guard editable else { throw AccessibilityError.unsupportedRead(appID) }
         try FieldPolicy.validate(role: role, protected: subrole == kAXSecureTextFieldSubrole, editable: editable, value: source)
-        return CapturedField(element: element, pid: pid, appID: appID, source: source,
+        return CapturedField(element: element, pid: pid, appID: appID, role: role, source: source,
                              bounds: bounds(of: element), richTextRisk: hasMixedFormatting(element, source: source))
     }
 
@@ -134,16 +135,23 @@ struct CapturedField {
     let element: AXUIElement
     let pid: pid_t
     let appID: String
+    let role: String
     let source: String
     let bounds: CGRect?
     let richTextRisk: Bool
 
-    func replaceIfUnchanged(with replacement: String) throws {
+    func replaceIfUnchanged(with replacement: String) async throws {
+        guard FieldPolicy.replacementMethod(role: role) == .directAccessibility else {
+            throw AccessibilityError.unsupportedWrite
+        }
         var targetPID: pid_t = 0
         guard AXUIElementGetPid(element, &targetPID) == .success, targetPID == pid else {
             throw AccessibilityError.stale
         }
         let currentSource = try AccessibilityField.fullText(of: element)
+        // A previous write may have landed even if its first readback was delayed.
+        // Confirm that outcome without sending a second write.
+        if currentSource == replacement { return }
         guard currentSource == source else { throw AccessibilityError.stale }
 
         let system = AXUIElementCreateSystemWide()
@@ -172,8 +180,12 @@ struct CapturedField {
         } else {
             throw AccessibilityError.unsupportedWrite
         }
-        guard try AccessibilityField.fullText(of: element) == replacement else {
-            throw AccessibilityError.writeFailed
+        // Some editors publish the new AX value on a later run-loop turn.
+        // Observe for up to one second before calling an accepted write unverified.
+        for attempt in 0..<20 {
+            if (try? AccessibilityField.fullText(of: element)) == replacement { return }
+            if attempt < 19 { try await Task.sleep(for: .milliseconds(50)) }
         }
+        throw AccessibilityError.writeUnverified
     }
 }

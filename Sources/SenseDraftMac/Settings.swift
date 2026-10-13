@@ -17,11 +17,12 @@ final class AppSettings: ObservableObject {
     @Published var model: String
     @Published var planModel: String
     @Published var planModels: [PlanModel] = []
-    @Published var planAccountLabel: String = "Not connected"
+    @Published var planAccountLabel: String = "Checking account…"
     @Published var connectingPlan = false
     private var connectTask: Task<Void, Never>?
     private var planRefreshTask: Task<Void, Never>?
     @Published var locale: String
+    @Published var writingPreferences: WritingPreferences
     @Published var analyzeShortcut: Shortcut
     @Published var replaceShortcut: Shortcut
     @Published var apiKeyDraft = ""
@@ -36,6 +37,7 @@ final class AppSettings: ObservableObject {
         model = defaults.string(forKey: "model") ?? "gpt-6.1-sol"
         planModel = defaults.string(forKey: "planModel") ?? ""
         locale = defaults.string(forKey: "locale") ?? "en-US"
+        writingPreferences = WritingPreferencesStore.load()
         if let data = defaults.data(forKey: "hotkeys"),
            let settings = try? JSONDecoder().decode(HotkeySettings.self, from: data) {
             analyzeShortcut = settings.analyze
@@ -44,9 +46,21 @@ final class AppSettings: ObservableObject {
             analyzeShortcut = .defaultAnalyze
             replaceShortcut = .defaultReplace
         }
-        hasAPIKey = (try? APIKeyStore.load()) != nil
-        if let account = try? PlanAccountStore.load(), account.canUsePlan {
-            planAccountLabel = account.email ?? "Connected ChatGPT account"
+        hasAPIKey = false
+    }
+
+    func refreshStoredCredentials() {
+        Task {
+            hasAPIKey = await Task.detached(priority: .utility) {
+                (try? APIKeyStore.load()) != nil
+            }.value
+        }
+        Task {
+            planAccountLabel = await Task.detached(priority: .utility) {
+                let account = try? PlanAccountStore.load()
+                return account?.canUsePlan == true
+                    ? (account?.email ?? "Connected ChatGPT account") : "Not connected"
+            }.value
         }
     }
 
@@ -210,7 +224,8 @@ private struct SettingsView: View {
             .tabItem { Label("General", systemImage: "gearshape") }
             .tag(SettingsTab.general)
 
-            VStack(alignment: .leading, spacing: 16) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
                 Picker("AI source", selection: $settings.provider) {
                     ForEach(AIProviderChoice.allCases) { choice in Text(choice.rawValue).tag(choice) }
                 }.pickerStyle(.segmented)
@@ -255,9 +270,32 @@ private struct SettingsView: View {
                     Link("Manage ChatGPT usage", destination: URL(string: "https://chatgpt.com/settings/usage")!)
                 }
                 Button("Save AI settings") { settings.saveAI() }
-                Spacer()
+                Divider().padding(.vertical, 4)
+                Text("Writing preferences").font(.headline)
+                Text("Applied to the next analysis or regeneration.")
+                    .font(.callout).foregroundStyle(.secondary)
+                Picker("Tone", selection: $settings.writingPreferences.style) {
+                    ForEach(WritingStyle.allCases) { style in Text(style.title).tag(style) }
+                }
+                .pickerStyle(.segmented)
+                Picker("Opening case", selection: $settings.writingPreferences.openingCase) {
+                    ForEach(OpeningCase.allCases) { option in Text(option.title).tag(option) }
+                }
+                .pickerStyle(.segmented)
+                Text("Lowercase keeps the opening casual when grammar allows; names and “I” stay capitalized.")
+                    .font(.callout).foregroundStyle(.secondary)
+                Toggle("Use natural English abbreviations", isOn: $settings.writingPreferences.useNaturalAbbreviations)
+                Text("When appropriate, use common contractions and chat shorthand. Existing clear abbreviations are preserved either way.")
+                    .font(.callout).foregroundStyle(.secondary)
+                TextField("Optional guidance, e.g. shorter and more local", text: $settings.writingPreferences.customInstruction)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Extra writing guidance")
+                Text("The original meaning, names, and facts still take priority.")
+                    .font(.callout).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(24)
             }
-            .padding(24)
             .tabItem { Label("AI", systemImage: "sparkles") }
             .tag(SettingsTab.ai)
 
@@ -286,6 +324,13 @@ private struct SettingsView: View {
         .frame(minWidth: 600, minHeight: 430)
         .onChange(of: settings.provider) { _, choice in
             if choice == .chatGPTPlan { settings.refreshPlanModels() }
+        }
+        .onChange(of: settings.writingPreferences) { _, value in
+            if value.customInstruction.count > 240 {
+                settings.writingPreferences.customInstruction = String(value.customInstruction.prefix(240))
+            } else {
+                WritingPreferencesStore.save(value)
+            }
         }
     }
 }

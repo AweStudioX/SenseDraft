@@ -30,6 +30,38 @@ final class OpenAIProviderTests: XCTestCase {
         XCTAssertTrue(instructions.contains("uncertainty"))
         XCTAssertTrue(instructions.contains("already natural"))
         XCTAssertFalse(instructions.contains("authoritative Chinese"))
+        XCTAssertTrue(instructions.contains("Preserve intentional abbreviations"))
+        XCTAssertTrue(instructions.contains("Do not add emphasis or details"))
+    }
+
+    func testNaturalAbbreviationsAreOptional() throws {
+        let preferences = WritingPreferences(useNaturalAbbreviations: true)
+        let input = try AnalysisInput(source: "Please check it when you can", locale: "en-US",
+                                      chineseIntent: nil, preferences: preferences)
+        let instructions = AnalysisPrompt.instructions(for: input)
+        XCTAssertTrue(instructions.contains("common, unambiguous English contractions and chat abbreviations"))
+        XCTAssertTrue(instructions.contains("only when they fit the source's tone"))
+
+        let defaultInput = try AnalysisInput(source: "Please check it when you can", locale: "en-US", chineseIntent: nil)
+        XCTAssertFalse(AnalysisPrompt.instructions(for: defaultInput).contains("common, unambiguous English contractions and chat abbreviations"))
+    }
+
+    func testOlderWritingPreferencesDecodeWithAbbreviationsOff() throws {
+        let old = #"{"style":"casual","openingCase":"matchInput","customInstruction":"keep it short"}"#.data(using: .utf8)!
+        let preferences = try JSONDecoder().decode(WritingPreferences.self, from: old)
+        XCTAssertFalse(preferences.useNaturalAbbreviations)
+        XCTAssertEqual(preferences.style, .casual)
+        XCTAssertEqual(preferences.customInstruction, "keep it short")
+    }
+
+    func testChineseInputUsesTranslationPromptAndDefaultCapitalization() throws {
+        let input = try AnalysisInput(source: "这个方案明天可以发给 Sam", locale: "en-US", chineseIntent: nil)
+        let instructions = AnalysisPrompt.instructions(for: input)
+        XCTAssertTrue(instructions.contains("Translate the Chinese source"))
+        XCTAssertTrue(instructions.contains("natural, idiomatic en-US English"))
+        XCTAssertTrue(instructions.contains("worthChanging to true"))
+        XCTAssertTrue(instructions.contains("standard capitalization"))
+        XCTAssertFalse(instructions.contains("Match the source's opening capitalization"))
     }
 
     func testEditedChineseIsAuthoritative() throws {
@@ -37,6 +69,39 @@ final class OpenAIProviderTests: XCTestCase {
         let instructions = AnalysisPrompt.instructions(for: input)
         XCTAssertTrue(instructions.contains("authoritative Chinese"))
         XCTAssertTrue(instructions.contains("我可能会发给他"))
+    }
+
+    func testCasualPreferencesKeepLowercaseOpeningAndMeaning() throws {
+        let preferences = WritingPreferences(style: .casual, openingCase: .matchInput,
+                                             customInstruction: "keep it short for chat")
+        let input = try AnalysisInput(source: "that will be great", locale: "en-US",
+                                      chineseIntent: nil, preferences: preferences)
+        let instructions = AnalysisPrompt.instructions(for: input)
+        XCTAssertTrue(instructions.contains("conversational"))
+        XCTAssertTrue(instructions.contains("lowercase"))
+        XCTAssertTrue(instructions.contains("keep it short for chat"))
+        XCTAssertTrue(instructions.contains("Preserve intended meaning"))
+        XCTAssertTrue(instructions.contains("proper names"))
+    }
+
+    func testStandardCapitalizationAndProfessionalStyle() throws {
+        let preferences = WritingPreferences(style: .professional, openingCase: .standard,
+                                             customInstruction: "")
+        let input = try AnalysisInput(source: "hello there", locale: "en-GB",
+                                      chineseIntent: nil, preferences: preferences)
+        let instructions = AnalysisPrompt.instructions(for: input)
+        XCTAssertTrue(instructions.contains("workplace"))
+        XCTAssertTrue(instructions.contains("standard capitalization"))
+        XCTAssertFalse(instructions.contains("User writing preference"))
+    }
+
+    func testExplicitLowercaseOpening() throws {
+        let preferences = WritingPreferences(openingCase: .lowercase)
+        let input = try AnalysisInput(source: "That will be great", locale: "en-US",
+                                      chineseIntent: nil, preferences: preferences)
+        let instructions = AnalysisPrompt.instructions(for: input)
+        XCTAssertTrue(instructions.contains("even if the source starts uppercase"))
+        XCTAssertTrue(instructions.contains("proper names"))
     }
 
     func testCompletedResponseIsParsedAndRequestUsesAPIKey() async throws {

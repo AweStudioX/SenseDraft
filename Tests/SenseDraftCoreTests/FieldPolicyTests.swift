@@ -2,8 +2,27 @@ import XCTest
 @testable import SenseDraftCore
 
 final class FieldPolicyTests: XCTestCase {
-    func testMixedChineseInputIsRejected() {
-        XCTAssertThrowsError(try FieldPolicy.validate(role: "AXTextArea", protected: false, editable: true, value: "Please review 这个版本")) { error in
+    func testMultilineEditorUsesVerifiedKeyboardReplacement() {
+        XCTAssertEqual(FieldPolicy.replacementMethod(role: "AXTextArea"), .verifiedKeyboard)
+        XCTAssertEqual(FieldPolicy.replacementMethod(role: "AXTextField"), .directAccessibility)
+    }
+
+    func testPlainAccessibleMultilineInputDoesNotRequireFormattingConfirmation() {
+        XCTAssertFalse(FieldPolicy.needsFormattingConfirmation(capturedWithKeyboard: false,
+                                                                 hasMixedFormatting: false))
+        XCTAssertTrue(FieldPolicy.needsFormattingConfirmation(capturedWithKeyboard: false,
+                                                                hasMixedFormatting: true))
+        XCTAssertTrue(FieldPolicy.needsFormattingConfirmation(capturedWithKeyboard: true,
+                                                                hasMixedFormatting: false))
+    }
+
+    func testChineseAndMixedInputAreAccepted() throws {
+        XCTAssertNoThrow(try FieldPolicy.validate(role: "AXTextArea", protected: false, editable: true, value: "请帮我看看这个版本"))
+        XCTAssertNoThrow(try FieldPolicy.validate(role: "AXTextArea", protected: false, editable: true, value: "Please review 这个版本"))
+    }
+
+    func testJapaneseKanaIsRejected() {
+        XCTAssertThrowsError(try FieldPolicy.validate(role: "AXTextArea", protected: false, editable: true, value: "こんにちは")) { error in
             XCTAssertEqual(error as? FieldError, .nonEnglish)
         }
     }
