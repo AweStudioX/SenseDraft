@@ -1,5 +1,9 @@
 # SenseDraft
 
+**English** | [简体中文](README.zh-CN.md)
+
+![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&logoColor=white) ![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white) [![MIT License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 <p align="center">
   <img src="Resources/AppIcon.png" alt="SenseDraft woodpecker icon" width="128" height="128">
 </p>
