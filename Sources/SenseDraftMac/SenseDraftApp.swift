@@ -160,7 +160,6 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         review.model.reason = nil
         review.model.lastGeneratedChinese = ""
         review.model.richTextRisk = field.richTextRisk
-        review.model.allowFormattingLoss = false
         review.model.providerLabel = settings.provider == .chatGPTPlan ? "Using ChatGPT plan" : "Using OpenAI API Key"
         switch field {
         case .keyboard:
@@ -266,8 +265,8 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
             review.model.message = "No changed English to replace."
             return
         }
-        if field.richTextRisk && !review.model.allowFormattingLoss {
-            review.model.message = "This editor has formatting. Confirm the formatting warning or copy the English."
+        if field.richTextRisk && !settings.allowFormattingLoss {
+            review.model.message = "This editor has formatting. Enable formatting loss in Settings → Home or copy the English."
             review.show(near: field.bounds)
             return
         }
@@ -383,7 +382,6 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         review.model.reason = nil
         review.model.ambiguity = nil
         review.model.richTextRisk = false
-        review.model.allowFormattingLoss = false
         review.model.providerLabel = ""
         review.model.captureNotice = ""
         review.model.usedKeyboardFallback = false

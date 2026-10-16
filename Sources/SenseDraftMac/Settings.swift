@@ -8,7 +8,27 @@ enum AIProviderChoice: String, CaseIterable, Identifiable {
     case chatGPTPlan = "ChatGPT plan"
     var id: String { rawValue }
 }
-enum SettingsTab: Hashable { case general, ai, shortcuts, permissions }
+enum SettingsTab: Hashable, CaseIterable {
+    case general, ai, shortcuts, permissions
+
+    var title: String {
+        switch self {
+        case .general: "Home"
+        case .ai: "AI & Writing"
+        case .shortcuts: "Shortcuts"
+        case .permissions: "Permissions"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .general: "house"
+        case .ai: "sparkles"
+        case .shortcuts: "keyboard"
+        case .permissions: "hand.raised"
+        }
+    }
+}
 
 @MainActor
 final class AppSettings: ObservableObject {
@@ -22,6 +42,9 @@ final class AppSettings: ObservableObject {
     private var connectTask: Task<Void, Never>?
     private var planRefreshTask: Task<Void, Never>?
     @Published var locale: String
+    @Published var allowFormattingLoss: Bool {
+        didSet { UserDefaults.standard.set(allowFormattingLoss, forKey: "allowFormattingLoss") }
+    }
     @Published var writingPreferences: WritingPreferences
     @Published var analyzeShortcut: Shortcut
     @Published var replaceShortcut: Shortcut
@@ -37,6 +60,7 @@ final class AppSettings: ObservableObject {
         model = defaults.string(forKey: "model") ?? "gpt-6.1-sol"
         planModel = defaults.string(forKey: "planModel") ?? ""
         locale = defaults.string(forKey: "locale") ?? "en-US"
+        allowFormattingLoss = defaults.bool(forKey: "allowFormattingLoss")
         writingPreferences = WritingPreferencesStore.load()
         if let data = defaults.data(forKey: "hotkeys"),
            let settings = try? JSONDecoder().decode(HotkeySettings.self, from: data) {
@@ -208,10 +232,11 @@ final class SettingsWindow {
     }
 
     func show(tab: SettingsTab? = nil) {
-        if let tab { settings.selectedTab = tab }
+        settings.selectedTab = tab ?? .general
         if window == nil {
-            let window = SettingsClosingWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 430), styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
+            let window = SettingsClosingWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 580), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
             window.title = "SenseDraft Settings"
+            window.minSize = NSSize(width: 720, height: 500)
             window.isReleasedWhenClosed = false
             window.center()
             window.contentView = NSHostingView(rootView: SettingsView(settings: settings,
@@ -232,19 +257,127 @@ private struct SettingsView: View {
     let onEndShortcutRecording: () -> Void
 
     var body: some View {
-        TabView(selection: $settings.selectedTab) {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("SenseDraft improves English while checking its meaning in Chinese.")
-                    .font(.title3)
-                Text("Analyze and Replace each use a global shortcut. No text selection is needed, and typing alone never sends a request.")
-                Spacer()
+        HStack(spacing: 0) {
+            sidebar
+            Divider()
+            Group {
+                switch settings.selectedTab {
+                case .general: homePage
+                case .ai: aiPage
+                case .shortcuts: shortcutsPage
+                case .permissions: PermissionSettingsView()
+                }
             }
-            .padding(24)
-            .tabItem { Label("General", systemImage: "gearshape") }
-            .tag(SettingsTab.general)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(nsColor: .windowBackgroundColor))
+        }
+        .frame(minWidth: 720, minHeight: 500)
+        .onChange(of: settings.provider) { _, choice in
+            if choice == .chatGPTPlan { settings.refreshPlanModels() }
+        }
+        .onChange(of: settings.writingPreferences) { _, value in
+            if value.customInstruction.count > 240 {
+                settings.writingPreferences.customInstruction = String(value.customInstruction.prefix(240))
+            } else {
+                WritingPreferencesStore.save(value)
+            }
+        }
+    }
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("SENSEDRAFT")
+                .font(.caption.weight(.semibold))
+                .tracking(1.2)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+            VStack(spacing: 4) {
+                ForEach(SettingsTab.allCases, id: \.self) { tab in
+                    Button {
+                        settings.selectedTab = tab
+                    } label: {
+                        Label(tab.title, systemImage: tab.icon)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 9)
+                            .contentShape(RoundedRectangle(cornerRadius: 9))
+                    }
+                    .buttonStyle(.plain)
+                    .background(settings.selectedTab == tab ? Color.accentColor.opacity(0.14) : .clear,
+                                in: RoundedRectangle(cornerRadius: 9))
+                    .accessibilityAddTraits(settings.selectedTab == tab ? .isSelected : [])
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .frame(width: 220)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
+        .background(.ultraThinMaterial)
+    }
+
+    private var homePage: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                HStack(alignment: .center, spacing: 20) {
+                    appLogo
+                        .frame(width: 92, height: 92)
+                        .accessibilityLabel("SenseDraft app icon")
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("SenseDraft")
+                            .font(.largeTitle.bold())
+                        Text("Write naturally. Keep your meaning.")
+                            .font(.title3)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 8)
+
+                settingsCard("How it works", icon: "text.quote") {
+                    Text("Press Analyze to review a clearer English draft and its Chinese meaning. Replace only when you choose to.")
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                settingsCard("Replacement", icon: "arrow.uturn.backward") {
+                    Toggle("Allow Replace to remove text formatting", isOn: $settings.allowFormattingLoss)
+                    Text("Some editors cannot preserve formatting during replacement. This choice is saved for future sessions.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: 620, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(32)
+        }
+        .navigationTitle("Home")
+    }
+
+    private var appLogo: some View {
+        Group {
+            if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "png"),
+               let icon = NSImage(contentsOf: url) {
+                Image(nsImage: icon)
+                    .resizable()
+                    .scaledToFit()
+            } else {
+                Image(systemName: "text.quote")
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(.blue)
+                    .padding(20)
+            }
+        }
+    }
+
+    private var aiPage: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                pageHeading("AI & Writing", subtitle: "Choose a provider and shape the English you want to write.")
+                settingsCard("AI source", icon: "sparkles") {
                 Picker("AI source", selection: $settings.provider) {
                     ForEach(AIProviderChoice.allCases) { choice in Text(choice.rawValue).tag(choice) }
                 }.pickerStyle(.segmented)
@@ -289,8 +422,8 @@ private struct SettingsView: View {
                     Link("Manage ChatGPT usage", destination: URL(string: "https://chatgpt.com/settings/usage")!)
                 }
                 Button("Save AI settings") { settings.saveAI() }
-                Divider().padding(.vertical, 4)
-                Text("Writing preferences").font(.headline)
+                }
+                settingsCard("Writing preferences", icon: "textformat") {
                 Text("Applied to the next analysis or regeneration.")
                     .font(.callout).foregroundStyle(.secondary)
                 Picker("Tone", selection: $settings.writingPreferences.style) {
@@ -312,14 +445,21 @@ private struct SettingsView: View {
                 Text("The original meaning, names, and facts still take priority.")
                     .font(.callout).foregroundStyle(.secondary)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(24)
             }
-            .tabItem { Label("AI", systemImage: "sparkles") }
-            .tag(SettingsTab.ai)
+            .frame(maxWidth: 620, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(32)
+        }
+        .navigationTitle("AI & Writing")
+    }
 
+    private var shortcutsPage: some View {
+        ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                pageHeading("Shortcuts", subtitle: "Choose the keys you use to analyze and replace text.")
+                settingsCard("Global shortcuts", icon: "keyboard") {
                 Text("Click a shortcut box, then press the new key combination. Include Command, Option, or Control.")
+                    .font(.callout).foregroundStyle(.secondary)
                 HStack { Text("Analyze").frame(width: 90, alignment: .leading); ShortcutCapture(shortcut: $settings.analyzeShortcut, onBegin: onBeginShortcutRecording, onEnd: onEndShortcutRecording).frame(width: 190, height: 30).id(settings.shortcutDisplayRevision) }
                 HStack { Text("Replace").frame(width: 90, alignment: .leading); ShortcutCapture(shortcut: $settings.replaceShortcut, onBegin: onBeginShortcutRecording, onEnd: onEndShortcutRecording).frame(width: 190, height: 30).id(settings.shortcutDisplayRevision) }
                 HStack {
@@ -330,27 +470,33 @@ private struct SettingsView: View {
                     }
                 }
                 Text(settings.shortcutMessage).foregroundStyle(.secondary)
-                Spacer()
+                }
             }
-            .padding(24)
-            .tabItem { Label("Shortcuts", systemImage: "keyboard") }
-            .tag(SettingsTab.shortcuts)
+            .frame(maxWidth: 620, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(32)
+        }
+        .navigationTitle("Shortcuts")
+    }
 
-            PermissionSettingsView()
-                .tabItem { Label("Permissions", systemImage: "hand.raised") }
-                .tag(SettingsTab.permissions)
+    private func pageHeading(_ title: String, subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.largeTitle.bold())
+            Text(subtitle).foregroundStyle(.secondary)
         }
-        .frame(minWidth: 600, minHeight: 430)
-        .onChange(of: settings.provider) { _, choice in
-            if choice == .chatGPTPlan { settings.refreshPlanModels() }
+        .padding(.bottom, 4)
+    }
+
+    private func settingsCard<Content: View>(_ title: String, icon: String,
+                                              @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label(title, systemImage: icon)
+                .font(.headline)
+            content()
         }
-        .onChange(of: settings.writingPreferences) { _, value in
-            if value.customInstruction.count > 240 {
-                settings.writingPreferences.customInstruction = String(value.customInstruction.prefix(240))
-            } else {
-                WritingPreferencesStore.save(value)
-            }
-        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(20)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 16))
     }
 }
 

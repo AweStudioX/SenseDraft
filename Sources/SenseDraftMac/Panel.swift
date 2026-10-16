@@ -14,7 +14,6 @@ final class ReviewModel: ObservableObject {
     @Published var isReady = false
     @Published var captureFailed = false
     @Published var richTextRisk = false
-    @Published var allowFormattingLoss = false
     @Published var replaceShortcutText = "⌥⌘↩"
     @Published var providerLabel = ""
     @Published var captureNotice = ""
@@ -148,20 +147,23 @@ private struct ReviewView: View {
                     .padding(.horizontal, 16)
                     .padding(.top, 8)
                     .padding(.bottom, 4)
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        suggestionSection
-                        meaningSection
-                        if let ambiguity = model.ambiguity, !ambiguity.isEmpty {
-                            Label(ambiguity, systemImage: "questionmark.bubble")
-                                .font(.caption)
-                                .foregroundStyle(.orange)
-                                .fixedSize(horizontal: false, vertical: true)
+                GeometryReader { geometry in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 12) {
+                            let extraHeight = max(0, geometry.size.height - 220)
+                            suggestionSection(editorHeight: 70 + extraHeight * 0.6)
+                            meaningSection(editorHeight: 58 + extraHeight * 0.4)
+                            if let ambiguity = model.ambiguity, !ambiguity.isEmpty {
+                                Label(ambiguity, systemImage: "questionmark.bubble")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
                 }
                 footer
             }
@@ -235,14 +237,14 @@ private struct ReviewView: View {
         }
     }
 
-    private var suggestionSection: some View {
+    private func suggestionSection(editorHeight: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack {
                 sectionLabel("SUGGESTED ENGLISH", icon: "sparkles")
                 Spacer()
                 Text("Editable").font(.caption2).foregroundStyle(.tertiary)
             }
-            editor(text: $model.english, height: 70, enabled: model.isReady && !model.isLoading)
+            editor(text: $model.english, height: editorHeight, enabled: model.isReady && !model.isLoading)
                 .accessibilityLabel("Suggested English")
             if let reason = model.reason, !reason.isEmpty {
                 Text(reason).font(.caption).foregroundStyle(.secondary)
@@ -251,14 +253,14 @@ private struct ReviewView: View {
         }
     }
 
-    private var meaningSection: some View {
+    private func meaningSection(editorHeight: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack {
                 sectionLabel("CHINESE MEANING", icon: "character.book.closed")
                 Spacer()
                 Text("Edit if needed").font(.caption2).foregroundStyle(.tertiary)
             }
-            editor(text: $model.chinese, height: 58, enabled: model.isReady && !model.isLoading)
+            editor(text: $model.chinese, height: editorHeight, enabled: model.isReady && !model.isLoading)
                 .accessibilityLabel("Chinese interpretation")
         }
     }
@@ -266,8 +268,9 @@ private struct ReviewView: View {
     private var footer: some View {
         VStack(alignment: .leading, spacing: 8) {
             if model.richTextRisk {
-                Toggle("Replace may remove text formatting", isOn: $model.allowFormattingLoss)
-                    .font(.callout)
+                Text("Replacing here may remove text formatting.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             if !model.message.isEmpty && model.message != "Already natural — no change suggested." {
                 Text(model.message)

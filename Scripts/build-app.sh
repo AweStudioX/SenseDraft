@@ -21,7 +21,7 @@ source_hash="$(shasum -a 256 "$binary" "$project_dir/Resources/AppIcon.png" "$pr
 # Leave an unchanged app bundle untouched. With ad hoc signing, the designated
 # requirement is a code hash, so every changed binary needs a fresh macOS
 # Accessibility grant. Re-signing needlessly makes development harder.
-if [[ -f "$packaged_binary" && -f "$packaged_plist" && -f "$source_hash_file" && -f "$identity_file" ]] &&
+if [[ -f "$packaged_binary" && -f "$packaged_plist" && -f "$metadata_dir/AppIcon.png" && -f "$source_hash_file" && -f "$identity_file" ]] &&
    [[ "$(cat "$source_hash_file")" == "$source_hash" ]] &&
    [[ "$(cat "$identity_file")" == "$identity" ]] &&
    cmp -s "$project_dir/Resources/Info.plist" "$packaged_plist" &&
@@ -32,6 +32,7 @@ else
     cp "$project_dir/Resources/Info.plist" "$packaged_plist"
     mkdir -p "$metadata_dir"
     cp "$project_dir/Resources/StatusBar.png" "$metadata_dir/StatusBar.png"
+    cp "$project_dir/Resources/AppIcon.png" "$metadata_dir/AppIcon.png"
     iconset="$(mktemp -d "${TMPDIR:-/tmp}/SenseDraft.iconset.XXXXXX")"
     iconset="$iconset/SenseDraft.iconset"
     mkdir -p "$iconset"
