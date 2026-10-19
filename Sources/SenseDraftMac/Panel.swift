@@ -24,6 +24,7 @@ final class ReviewModel: ObservableObject {
     var onRegenerate: (() -> Void)?
     var onCopy: (() -> Void)?
     var onReplace: (() -> Void)?
+    var onOpenHistory: (() -> Void)?
     var onClose: (() -> Void)?
 }
 
@@ -31,13 +32,15 @@ final class ReviewModel: ObservableObject {
 final class ReviewPanel: NSObject, NSWindowDelegate {
     let model = ReviewModel()
     private let panel: NSPanel
+    private let history: HistoryStore
     private let savedXKey = "reviewPanelManualX"
     private let savedYKey = "reviewPanelManualY"
     private var positioning = false
     private var lastAutomaticOrigin: CGPoint?
     var onDismiss: (() -> Void)?
 
-    override init() {
+    init(history: HistoryStore) {
+        self.history = history
         panel = EscapeClosingPanel(contentRect: NSRect(x: 0, y: 0, width: 560, height: 410),
                         styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
                         backing: .buffered, defer: false)
@@ -52,7 +55,7 @@ final class ReviewPanel: NSObject, NSWindowDelegate {
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.minSize = NSSize(width: 500, height: 340)
-        let hostingView = NSHostingView(rootView: ReviewView(model: model))
+        let hostingView = NSHostingView(rootView: ReviewView(model: model, history: history))
         hostingView.sizingOptions = []
         panel.contentView = hostingView
         panel.center()
@@ -131,6 +134,8 @@ private final class EscapeClosingPanel: NSPanel {
 
 private struct ReviewView: View {
     @ObservedObject var model: ReviewModel
+    @ObservedObject var history: HistoryStore
+    @State private var showingHistory = false
 
     private var hasReplacement: Bool {
         model.isReady && !model.english.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -187,6 +192,20 @@ private struct ReviewView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
+            Button {
+                showingHistory.toggle()
+            } label: {
+                Image(systemName: "clock.arrow.circlepath")
+            }
+            .buttonStyle(.borderless)
+            .help("History")
+            .accessibilityLabel("History")
+            .popover(isPresented: $showingHistory, arrowEdge: .trailing) {
+                HistoryQuickView(history: history) {
+                    showingHistory = false
+                    model.onOpenHistory?()
+                }
+            }
             if model.isLoading { ProgressView().controlSize(.small) }
             else {
                 Text(model.captureFailed ? "Input unavailable" : (model.isReady ? (hasReplacement ? "Ready" : "No change") : "Waiting"))

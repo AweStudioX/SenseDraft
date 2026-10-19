@@ -5,11 +5,12 @@ import SenseDraftCore
 final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private let settings = AppSettings()
-    private lazy var settingsWindow = SettingsWindow(settings: settings,
+    private lazy var history = HistoryStore(retention: settings.historyRetention)
+    private lazy var settingsWindow = SettingsWindow(settings: settings, history: history,
         onSaveShortcuts: { [weak self] in self?.saveShortcuts() },
         onBeginShortcutRecording: { [weak self] in self?.hotkeys?.unregister() },
         onEndShortcutRecording: { [weak self] in self?.resumeShortcuts() })
-    private let review = ReviewPanel()
+    private lazy var review = ReviewPanel(history: history)
     private var hotkeys: GlobalHotkeys?
     private var activeHotkeys: HotkeySettings?
     private var captured: CapturedInput?
@@ -17,6 +18,7 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
     private var replaceTask: Task<Void, Never>?
     private var isReplacing = false
     private var session: AnalysisSession?
+    private var historyID: UUID?
     private var requestTask: Task<Void, Never>?
     private var keyboardLayoutObserver: NSObjectProtocol?
 
@@ -28,6 +30,7 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         review.model.onRegenerate = { [weak self] in self?.regenerate() }
         review.model.onCopy = { [weak self] in self?.copyEnglish() }
         review.model.onReplace = { [weak self] in self?.replace() }
+        review.model.onOpenHistory = { [weak self] in self?.settingsWindow.show(tab: .history) }
         review.model.onClose = { [weak self] in self?.review.close() }
         review.onDismiss = { [weak self] in self?.discardSession() }
         keyboardLayoutObserver = NotificationCenter.default.addObserver(
@@ -59,6 +62,7 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         }
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "SenseDraft Settings…", action: #selector(openSettings), keyEquivalent: ","))
+        menu.addItem(NSMenuItem(title: "History…", action: #selector(openHistory), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit SenseDraft", action: #selector(quit), keyEquivalent: "q"))
         menu.items.forEach { $0.target = self }
@@ -82,6 +86,7 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openSettings() { settingsWindow.show() }
+    @objc private func openHistory() { settingsWindow.show(tab: .history) }
     @objc private func quit() { NSApp.terminate(nil) }
 
     private func saveShortcuts() {
@@ -152,6 +157,7 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
 
     private func presentCaptured(_ field: CapturedInput) {
         captured = field
+        historyID = UUID()
         review.model.captureFailed = false
         review.model.source = field.source
         review.model.english = ""
@@ -245,6 +251,12 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
                             : "")
                         : "Already natural — no change suggested."
                     self.review.model.isLoading = false
+                    if self.settings.historyEnabled, let historyID = self.historyID {
+                        self.history.record(HistoryEntry(id: historyID, source: field.source,
+                            english: result.english, chinese: result.chineseMeaning,
+                            reason: result.reason, ambiguity: result.ambiguity,
+                            provider: self.review.model.providerLabel))
+                    }
                 } catch {
                     guard let self, !Task.isCancelled, self.session?.generation == newSession.generation else { return }
                     self.review.model.message = self.analysisErrorMessage(error)
@@ -293,6 +305,9 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
                 try await field.replaceIfUnchanged(with: self.review.model.english)
                 guard !Task.isCancelled else { return }
                 ReplacementDiagnostics.stage("writeVerified")
+                if let historyID = self.historyID {
+                    self.history.markReplaced(historyID, english: self.review.model.english)
+                }
                 self.review.model.message = "Replaced the original input."
                 self.review.model.isReady = false
                 self.captured = nil
@@ -371,6 +386,7 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         requestTask = nil
         captured = nil
         session = nil
+        historyID = nil
         review.model.isReady = false
         review.model.isLoading = false
         review.model.source = ""

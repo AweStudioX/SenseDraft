@@ -9,11 +9,12 @@ enum AIProviderChoice: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 enum SettingsTab: Hashable, CaseIterable {
-    case general, ai, shortcuts, permissions
+    case general, history, ai, shortcuts, permissions
 
     var title: String {
         switch self {
         case .general: "Home"
+        case .history: "History"
         case .ai: "AI & Writing"
         case .shortcuts: "Shortcuts"
         case .permissions: "Permissions"
@@ -23,6 +24,7 @@ enum SettingsTab: Hashable, CaseIterable {
     var icon: String {
         switch self {
         case .general: "house"
+        case .history: "clock.arrow.circlepath"
         case .ai: "sparkles"
         case .shortcuts: "keyboard"
         case .permissions: "hand.raised"
@@ -45,6 +47,12 @@ final class AppSettings: ObservableObject {
     @Published var allowFormattingLoss: Bool {
         didSet { UserDefaults.standard.set(allowFormattingLoss, forKey: "allowFormattingLoss") }
     }
+    @Published var historyEnabled: Bool {
+        didSet { UserDefaults.standard.set(historyEnabled, forKey: "historyEnabled") }
+    }
+    @Published var historyRetention: HistoryRetention {
+        didSet { UserDefaults.standard.set(historyRetention.rawValue, forKey: "historyRetention") }
+    }
     @Published var writingPreferences: WritingPreferences
     @Published var analyzeShortcut: Shortcut
     @Published var replaceShortcut: Shortcut
@@ -61,6 +69,8 @@ final class AppSettings: ObservableObject {
         planModel = defaults.string(forKey: "planModel") ?? ""
         locale = defaults.string(forKey: "locale") ?? "en-US"
         allowFormattingLoss = defaults.bool(forKey: "allowFormattingLoss")
+        historyEnabled = defaults.bool(forKey: "historyEnabled")
+        historyRetention = HistoryRetention(rawValue: defaults.string(forKey: "historyRetention") ?? "") ?? .unlimited
         writingPreferences = WritingPreferencesStore.load()
         if let data = defaults.data(forKey: "hotkeys"),
            let settings = try? JSONDecoder().decode(HotkeySettings.self, from: data) {
@@ -219,13 +229,15 @@ private final class SettingsClosingWindow: NSWindow {
 final class SettingsWindow {
     private var window: NSWindow?
     private let settings: AppSettings
+    private let history: HistoryStore
     private let onSaveShortcuts: () -> Void
     private let onBeginShortcutRecording: () -> Void
     private let onEndShortcutRecording: () -> Void
 
-    init(settings: AppSettings, onSaveShortcuts: @escaping () -> Void,
+    init(settings: AppSettings, history: HistoryStore, onSaveShortcuts: @escaping () -> Void,
          onBeginShortcutRecording: @escaping () -> Void, onEndShortcutRecording: @escaping () -> Void) {
         self.settings = settings
+        self.history = history
         self.onSaveShortcuts = onSaveShortcuts
         self.onBeginShortcutRecording = onBeginShortcutRecording
         self.onEndShortcutRecording = onEndShortcutRecording
@@ -240,6 +252,7 @@ final class SettingsWindow {
             window.isReleasedWhenClosed = false
             window.center()
             window.contentView = NSHostingView(rootView: SettingsView(settings: settings,
+                history: history,
                 onSaveShortcuts: onSaveShortcuts, onBeginShortcutRecording: onBeginShortcutRecording,
                 onEndShortcutRecording: onEndShortcutRecording))
             self.window = window
@@ -252,6 +265,7 @@ final class SettingsWindow {
 
 private struct SettingsView: View {
     @ObservedObject var settings: AppSettings
+    @ObservedObject var history: HistoryStore
     let onSaveShortcuts: () -> Void
     let onBeginShortcutRecording: () -> Void
     let onEndShortcutRecording: () -> Void
@@ -263,6 +277,7 @@ private struct SettingsView: View {
             Group {
                 switch settings.selectedTab {
                 case .general: homePage
+                case .history: HistoryView(settings: settings, history: history)
                 case .ai: aiPage
                 case .shortcuts: shortcutsPage
                 case .permissions: PermissionSettingsView()
