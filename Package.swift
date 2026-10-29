@@ -11,6 +11,7 @@ let package = Package(
     targets: [
         .target(name: "SenseDraftCore"),
         .executableTarget(name: "SenseDraftMac", dependencies: ["SenseDraftCore"]),
-        .testTarget(name: "SenseDraftCoreTests", dependencies: ["SenseDraftCore"])
+        .testTarget(name: "SenseDraftCoreTests", dependencies: ["SenseDraftCore"]),
+        .testTarget(name: "SenseDraftMacTests", dependencies: ["SenseDraftMac", "SenseDraftCore"])
     ]
 )

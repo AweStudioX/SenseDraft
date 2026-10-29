@@ -15,8 +15,16 @@ packaged_plist="$bundle/Contents/Info.plist"
 metadata_dir="$bundle/Contents/Resources"
 source_hash_file="$metadata_dir/bundle-inputs.sha256"
 identity_file="$metadata_dir/signing-identity.txt"
-identity="${SENSEDRAFT_SIGN_IDENTITY:--}"
-source_hash="$(shasum -a 256 "$binary" "$project_dir/Resources/AppIcon.png" "$project_dir/Resources/StatusBar.png" | shasum -a 256 | cut -d ' ' -f 1)"
+local_identity_file="$project_dir/build/local-signing-identity.txt"
+if [[ -n "${SENSEDRAFT_SIGN_IDENTITY:-}" ]]; then
+    identity="$SENSEDRAFT_SIGN_IDENTITY"
+elif [[ -s "$local_identity_file" ]]; then
+    identity="$(cat "$local_identity_file")"
+else
+    identity="$(security find-identity -v -p codesigning 2>/dev/null | awk '/"SenseDraft Local Development"/ { print $2; exit }' || true)"
+    identity="${identity:--}"
+fi
+source_hash="$(shasum -a 256 "$binary" "$project_dir/Resources/AppIcon.png" "$project_dir/Resources/StatusBar.png" "$project_dir"/Resources/ProviderIcons/*.png | shasum -a 256 | cut -d ' ' -f 1)"
 
 # Leave an unchanged app bundle untouched. With ad hoc signing, the designated
 # requirement is a code hash, so every changed binary needs a fresh macOS
@@ -30,9 +38,10 @@ if [[ -f "$packaged_binary" && -f "$packaged_plist" && -f "$metadata_dir/AppIcon
 else
     cp "$binary" "$packaged_binary"
     cp "$project_dir/Resources/Info.plist" "$packaged_plist"
-    mkdir -p "$metadata_dir"
+    mkdir -p "$metadata_dir/ProviderIcons"
     cp "$project_dir/Resources/StatusBar.png" "$metadata_dir/StatusBar.png"
     cp "$project_dir/Resources/AppIcon.png" "$metadata_dir/AppIcon.png"
+    cp "$project_dir"/Resources/ProviderIcons/*.png "$metadata_dir/ProviderIcons/"
     iconset="$(mktemp -d "${TMPDIR:-/tmp}/SenseDraft.iconset.XXXXXX")"
     iconset="$iconset/SenseDraft.iconset"
     mkdir -p "$iconset"
@@ -48,7 +57,7 @@ else
     printf '%s\n' "$identity" > "$identity_file"
     codesign --force --sign "$identity" --timestamp=none "$bundle"
     if [[ "$identity" == "-" ]]; then
-        echo "Ad hoc signature changed: macOS may require a fresh Accessibility grant for this build." >&2
+        echo "Ad hoc signature changed: macOS may require a fresh Accessibility grant. Set up a stable signing identity as described in README.md." >&2
     fi
 fi
 test -x "$bundle/Contents/MacOS/SenseDraftMac"

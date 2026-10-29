@@ -6,10 +6,10 @@ actor RecordingTransport: HTTPTransport {
     let response: (Data, HTTPURLResponse)
     private(set) var requests: [URLRequest] = []
 
-    init(status: Int = 200, body: String) {
+    init(status: Int = 200, body: String, headers: [String: String]? = nil) {
         self.response = (
             Data(body.utf8),
-            HTTPURLResponse(url: URL(string: "https://api.openai.com/v1/responses")!, statusCode: status, httpVersion: nil, headerFields: nil)!
+            HTTPURLResponse(url: URL(string: "https://api.openai.com/v1/responses")!, statusCode: status, httpVersion: nil, headerFields: headers)!
         )
     }
 

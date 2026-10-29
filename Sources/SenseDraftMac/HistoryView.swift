@@ -12,7 +12,7 @@ struct HistoryView: View {
     @ObservedObject var history: HistoryStore
     @State private var search = ""
     @State private var filter: HistoryFilter = .all
-    @State private var selectedEntry: HistoryEntry?
+    @State private var selectedEntryID: UUID?
     @State private var confirmingClear = false
 
     private var visibleEntries: [HistoryEntry] {
@@ -24,129 +24,135 @@ struct HistoryView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("History").font(.largeTitle.bold())
-                    Spacer()
-                    Text("\(history.entries.count) saved")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("History").font(.title2.bold())
+                    Text("Encrypted on this Mac · \(history.entries.count) saved")
+                        .font(.callout).foregroundStyle(.secondary)
                 }
-
-                VStack(alignment: .leading, spacing: 10) {
-                    Toggle("Save analysis history", isOn: $settings.historyEnabled)
-                        .font(.headline)
-                    Picker("Keep history for", selection: $settings.historyRetention) {
-                        ForEach(HistoryRetention.allCases) { option in
-                            Text(option.title).tag(option)
+                Spacer()
+                Toggle("Save history", isOn: $settings.historyEnabled)
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 18)
+            Divider()
+            HStack(spacing: 0) {
+                VStack(spacing: 0) {
+                    TextField("Search history", text: $search)
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Search history")
+                        .padding(12)
+                    Picker("Filter", selection: $filter) {
+                        ForEach(HistoryFilter.allCases, id: \.self) { option in
+                            Text(option.rawValue).tag(option)
                         }
                     }
-                    Text("Saved only on this Mac and encrypted. Choosing 7 or 30 days removes older entries immediately. No limit keeps entries until you delete them and may use more disk space or load more slowly.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(18)
-                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 16))
-
-                if let errorMessage = history.errorMessage {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label(errorMessage, systemImage: "exclamationmark.triangle")
-                            .font(.callout)
-                            .foregroundStyle(.orange)
-                        if history.entries.isEmpty {
-                            Button("Delete unreadable history", role: .destructive) {
-                                confirmingClear = true
-                            }
-                        }
-                    }
-                }
-
-                if history.entries.isEmpty {
-                    emptyState
-                } else {
-                    HStack(spacing: 12) {
-                        TextField("Search original, English, or meaning", text: $search)
-                            .textFieldStyle(.roundedBorder)
-                            .accessibilityLabel("Search history")
-                        Picker("Filter", selection: $filter) {
-                            ForEach(HistoryFilter.allCases, id: \.self) { option in
-                                Text(option.rawValue).tag(option)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .frame(width: 180)
-                    }
-
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 10)
+                    Divider()
                     if visibleEntries.isEmpty {
-                        Text("No matching history")
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, minHeight: 120)
-                    } else {
-                        LazyVStack(spacing: 10) {
-                            ForEach(visibleEntries) { entry in
-                                Button { selectedEntry = entry } label: {
-                                    historyRow(entry)
-                                }
-                                .buttonStyle(.plain)
+                        VStack(spacing: 10) {
+                            Image(systemName: "clock.arrow.circlepath")
+                                .font(.title2)
+                                .foregroundStyle(.secondary)
+                            Text(history.entries.isEmpty ? "Your history starts here" : "No matching history")
+                                .font(.callout.weight(.medium))
+                            if history.entries.isEmpty {
+                                Text(settings.historyEnabled
+                                     ? "The next analysis will appear here."
+                                     : "Turn on Save history to keep future suggestions.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.center)
                             }
                         }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding(20)
+                    } else {
+                        ScrollView {
+                            LazyVStack(spacing: 2) {
+                                ForEach(visibleEntries) { entry in
+                                    Button { selectedEntryID = entry.id } label: {
+                                        historyRow(entry)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .background(selectedEntryID == entry.id ? Color.accentColor.opacity(0.15) : .clear,
+                                                in: RoundedRectangle(cornerRadius: 9))
+                                }
+                            }
+                            .padding(8)
+                        }
                     }
-
-                    Button("Clear all history", role: .destructive) { confirmingClear = true }
-                        .font(.callout)
-                        .padding(.top, 4)
+                }
+                .frame(width: 258)
+                .background(Color(nsColor: .controlBackgroundColor))
+                Divider()
+                if let selected = history.entries.first(where: { $0.id == selectedEntryID }) {
+                    HistoryDetailView(entry: selected, history: history) { selectedEntryID = nil }
+                } else {
+                    VStack(spacing: 12) {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(.system(size: 32, weight: .light))
+                            .foregroundStyle(.secondary)
+                        Text("Select an analysis").font(.title3.weight(.semibold))
+                        Text("Its English, meaning, and original text appear here.")
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            .frame(maxWidth: 620, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(32)
+            Divider()
+            HStack {
+                if let errorMessage = history.errorMessage {
+                    Label(errorMessage, systemImage: "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+                Spacer()
+                Picker("Keep history for", selection: $settings.historyRetention) {
+                    ForEach(HistoryRetention.allCases) { option in Text(option.title).tag(option) }
+                }
+                .frame(width: 175)
+                Button("Clear all", role: .destructive) { confirmingClear = true }
+                    .disabled(history.entries.isEmpty && history.errorMessage == nil)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
         }
         .confirmationDialog("Delete all saved history?", isPresented: $confirmingClear) {
-            Button("Delete all history", role: .destructive) { history.clear() }
+            Button("Delete all history", role: .destructive) {
+                history.clear()
+                selectedEntryID = nil
+            }
         } message: {
             Text("This removes every saved analysis from this Mac.")
         }
-        .sheet(item: $selectedEntry) { entry in
-            HistoryDetailView(entry: entry, history: history)
-        }
         .navigationTitle("History")
-        .onAppear { history.pruneExpired() }
-        .onChange(of: settings.historyRetention) { _, value in history.setRetention(value) }
-    }
-
-    private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "clock.arrow.circlepath")
-                .font(.system(size: 36, weight: .light))
-                .foregroundStyle(.secondary)
-            Text("Your history starts here")
-                .font(.title3.weight(.semibold))
-            Text(settings.historyEnabled
-                 ? "The next successful analysis will appear here."
-                 : "Turn on Save analysis history to keep future suggestions.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+        .onAppear {
+            history.pruneExpired()
+            selectedEntryID = visibleEntries.first?.id
         }
-        .frame(maxWidth: .infinity, minHeight: 220)
+        .onChange(of: settings.historyRetention) { _, value in history.setRetention(value) }
+        .onChange(of: visibleEntries.map(\.id)) { _, ids in
+            if let selectedEntryID, ids.contains(selectedEntryID) { return }
+            selectedEntryID = ids.first
+        }
     }
 
     private func historyRow(_ entry: HistoryEntry) -> some View {
-        HStack(alignment: .top, spacing: 14) {
+        HStack(alignment: .top, spacing: 8) {
             Image(systemName: entry.replaced ? "checkmark.circle.fill" : "sparkles")
                 .font(.title3)
                 .foregroundStyle(entry.replaced ? Color.green : Color.accentColor)
                 .frame(width: 28)
             VStack(alignment: .leading, spacing: 7) {
                 Text(entry.english)
-                    .font(.body.weight(.medium))
+                    .font(.callout.weight(.medium))
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Text(entry.source.replacingOccurrences(of: "\n", with: " "))
-                    .font(.callout)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 HStack(spacing: 8) {
@@ -157,21 +163,16 @@ struct HistoryView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
-            Image(systemName: "chevron.right")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.tertiary)
-                .padding(.top, 4)
         }
-        .padding(16)
+        .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14))
     }
 }
 
 private struct HistoryDetailView: View {
     let entry: HistoryEntry
     @ObservedObject var history: HistoryStore
-    @Environment(\.dismiss) private var dismiss
+    let onDelete: () -> Void
     @State private var confirmingDelete = false
 
     var body: some View {
@@ -185,7 +186,6 @@ private struct HistoryDetailView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Done") { dismiss() }
             }
             .padding(24)
 
@@ -215,10 +215,10 @@ private struct HistoryDetailView: View {
             }
             .padding(24)
         }
-        .frame(minWidth: 560, minHeight: 480)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .confirmationDialog("Delete this history entry?", isPresented: $confirmingDelete) {
             Button("Delete entry", role: .destructive) {
-                if history.remove(entry.id) { dismiss() }
+                if history.remove(entry.id) { onDelete() }
             }
         }
     }

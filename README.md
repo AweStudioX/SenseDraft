@@ -28,10 +28,10 @@ The writing flow keeps the intended meaning visible:
 | | Current behavior |
 | --- | --- |
 | Input | English polishing and Chinese-to-English writing from the complete focused field |
-| Review | Editable English draft, Chinese meaning check, regeneration, and explanation when no rewrite is needed |
+| Review | Compare results from the AI sources selected in settings; choose one to edit, copy, regenerate, or replace, with a Chinese meaning check |
 | Control | Separate, configurable global shortcuts for Analyze and Replace; no background analysis while typing |
 | Writing style | Tone, opening capitalization, extra guidance, and English locale settings |
-| AI access | Your OpenAI API key or an eligible account using **Sign in with ChatGPT**; credentials stay in macOS Keychain |
+| AI access | OpenAI, DeepSeek, and Kimi API keys, plus an eligible account using **Sign in with ChatGPT**; credentials stay in macOS Keychain |
 | Editor access | Accessibility capture where supported; a shortcut-triggered keyboard fallback for editors that hide their text |
 | Replacement | Source verification before writing, result verification afterward, and a copy option when replacement is unavailable |
 
@@ -46,26 +46,26 @@ cd SenseDraft
 open build/SenseDraft.app
 ```
 
-On first launch, follow the **Permissions** guide to grant Accessibility access. In **Settings → AI**, choose an OpenAI API key or **ChatGPT plan**, select a model and English locale, and save. ChatGPT plan usage requires an eligible account and is subject to that account's limits; see the [connection guide](docs/chatgpt-plan.md). API credentials are stored in Keychain.
+On first launch, follow the **Permissions** guide to grant Accessibility access. In **Settings → AI Services**, enable and configure the sources you want, then turn on **Show in results** for each service you want to compare. SenseDraft contacts those selected sources in the order shown. For Kimi, choose the China or Global API region that matches your key. ChatGPT plan usage requires an eligible account and is subject to that account's limits; see the [connection guide](docs/chatgpt-plan.md). API credentials are stored in Keychain.
 
 The default shortcuts are **⌘⌥E** for Analyze and **⌘⌥Return** for Replace. You can change or restore them in **Settings → Shortcuts**. Press **Escape** or **⌘W** to close Settings; when recording a shortcut, Escape cancels the recording first.
 
 ## Use it in an editor
 
 1. Put the caret in an English or Chinese text field and press **Analyze**. You do not need to select text.
-2. Check the proposed English against its Chinese interpretation. Edit either one if needed; if you change the Chinese meaning, choose **Regenerate**.
-3. For a supported single-line field, click **Replace** or press its shortcut. For multiline editors, return to the original input and use the **Replace shortcut**. Use **Copy English** when the editor does not support a verified replacement.
+2. If multiple results are available, use ↑/↓ in the review panel to select one. Check its English against the Chinese interpretation and edit either one if needed; if you change the Chinese meaning, choose **Regenerate**.
+3. With the review panel focused outside a text editor, press **Return** to replace the selected result, or click **Replace**. Inside a result editor, Return inserts a newline. For editors where SenseDraft cannot restore focus, return to the original input and use the **Replace shortcut**. Use **Copy English** when the editor does not support a verified replacement.
 
 The review panel normally opens beside the focused input and remembers a position you drag it to. **Escape** closes it without changing the source. If the source changed after analysis, SenseDraft refuses to overwrite it. It asks before replacing text that appears to have mixed formatting, because replacement may remove formatting.
 
 ## Privacy and editor limitations
 
-- SenseDraft reads the focused field only after **Analyze** and sends that text to the selected OpenAI model. It does not keep an input/output history.
+- SenseDraft reads the focused field only after **Analyze** and sends that text to the configured sources used for the current analysis. Encrypted local history is optional and off by default.
 - A keyboard fallback may briefly select and copy the entire input when an editor does not expose its text through Accessibility. SenseDraft attempts to restore the clipboard, but the caret may move to the end and clipboard-history apps may retain the temporary copy.
 - Password and protected fields are excluded. Some editors do not support reliable capture or replacement; SenseDraft offers copying when it cannot safely write.
 - Cross-app behavior still needs packaged-app testing. The [compatibility table](docs/compatibility.md) distinguishes observed behavior from pending tests.
 
-For local ad hoc builds, macOS may require a fresh Accessibility grant when the app's code signature changes. If SenseDraft shows **Access needed** despite an enabled entry, quit it, remove the old entry in **System Settings → Privacy & Security → Accessibility**, add the current `build/SenseDraft.app`, and reopen it. `SENSEDRAFT_SIGN_IDENTITY` can be set when building with a stable signing identity.
+For local ad hoc builds, macOS may require a fresh Accessibility grant when the app's code signature changes. [Set up a stable local signing identity](docs/local-signing.md) once to keep approval across future builds. If SenseDraft shows **Access needed** despite an enabled entry, quit it, remove the old entry in **System Settings → Privacy & Security → Accessibility**, add the current `build/SenseDraft.app`, and reopen it.
 
 ## Development
 

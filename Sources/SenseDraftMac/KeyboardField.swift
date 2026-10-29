@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import OSLog
 import SenseDraftCore
 
 enum KeyboardFieldError: Error {
@@ -21,11 +22,44 @@ enum KeyboardFieldError: Error {
     case writeUnverified
 }
 
+enum KeyboardReplacementFocusDecision: Equatable {
+    case alreadyActive
+    case activateSource
+    case reject
+
+    static func decide(activePID: pid_t?, sourcePID: pid_t, ownPID: pid_t) -> Self {
+        if activePID == sourcePID { return .alreadyActive }
+        if activePID == ownPID { return .activateSource }
+        return .reject
+    }
+}
+
+enum KeyboardWindowSelection {
+    static func choose<Window>(focused: Window?, ancestor: Window?, main: Window?,
+                               windows: [Window]) -> Window? {
+        focused ?? ancestor ?? main ?? (windows.count == 1 ? windows[0] : nil)
+    }
+}
+
+@MainActor
+enum WindowResolutionRetry {
+    static func resolve<Window>(attempts: Int = 8, interval: Duration = .milliseconds(50),
+                                isActive: () -> Bool, probe: () -> Window?) async throws -> Window? {
+        for attempt in 0..<attempts {
+            guard isActive() else { throw KeyboardFieldError.notFrontmost }
+            if let window = probe() { return window }
+            if attempt < attempts - 1 { try await Task.sleep(for: interval) }
+        }
+        return nil
+    }
+}
+
 /// A shortcut-only fallback for editors whose text is absent from Accessibility.
 /// It uses the editor's own Select All / Copy / Paste commands and never observes
 /// typing between shortcuts.
 @MainActor
 struct KeyboardField {
+    private static let captureLogger = Logger(subsystem: "com.kaaaaai.SenseDraft", category: "capture")
     let pid: pid_t
     let appID: String
     let window: AXUIElement
@@ -44,12 +78,19 @@ struct KeyboardField {
         guard let appID = NSRunningApplication(processIdentifier: frontmostPID)?.bundleIdentifier else {
             throw KeyboardFieldError.noTarget
         }
-        let focused = focusedElement(of: frontmostPID)
+        var focused: AXUIElement?
+        let resolved = try await WindowResolutionRetry.resolve(isActive: { isActiveTarget(frontmostPID) }) {
+            focused = focusedElement(of: frontmostPID)
+            return resolvedWindow(of: frontmostPID, focusedElement: focused)
+        }
         if let expectedElement {
             guard let focused,
                   sameTarget(focused, expectedElement) else { throw KeyboardFieldError.focusedFieldChanged }
         }
-        guard let window = resolvedWindow(of: frontmostPID, focusedElement: focused) else {
+        guard let window = resolved else {
+            let windowCount = attributeElements(of: AXUIElementCreateApplication(frontmostPID),
+                                                name: kAXWindowsAttribute).count
+            captureLogger.warning("window unresolved focusedElement=\(focused != nil, privacy: .public) axWindows=\(windowCount, privacy: .public)")
             throw KeyboardFieldError.windowUnavailable
         }
         if let focused, !CFEqual(focused, window) {
@@ -180,6 +221,27 @@ struct KeyboardField {
         ReplacementDiagnostics.stage("fallbackCopyMatched")
     }
 
+    func restoreFrontmostForReplacement() async throws {
+        let decision = KeyboardReplacementFocusDecision.decide(
+            activePID: Self.activePID(), sourcePID: pid,
+            ownPID: ProcessInfo.processInfo.processIdentifier)
+        switch decision {
+        case .alreadyActive:
+            break
+        case .activateSource:
+            guard let app = NSRunningApplication(processIdentifier: pid),
+                  app.activate(options: []) else { throw KeyboardFieldError.focusRestoreFailed }
+            ReplacementDiagnostics.stage("targetActivationRequested")
+            for attempt in 0..<8 {
+                if Self.isActiveTarget(pid) { break }
+                if attempt < 7 { try await Task.sleep(for: .milliseconds(50)) }
+            }
+        case .reject:
+            throw KeyboardFieldError.notFrontmost
+        }
+        try checkTarget()
+    }
+
     private func selectAllAndCopy(allowTitleChange: Bool = false) async throws -> (text: String, changeCount: Int) {
         try checkTarget(allowTitleChange: allowTitleChange)
         let pasteboard = NSPasteboard.general
@@ -232,9 +294,25 @@ struct KeyboardField {
 
     private static func resolvedWindow(of pid: pid_t, focusedElement: AXUIElement?) -> AXUIElement? {
         let application = AXUIElementCreateApplication(pid)
-        return attributeElement(of: application, name: kAXFocusedWindowAttribute)
+        let focusedWindow = attributeElement(of: application, name: kAXFocusedWindowAttribute)
             ?? focusedElement.flatMap { attributeElement(of: $0, name: kAXWindowAttribute) }
-            ?? attributeElement(of: application, name: kAXMainWindowAttribute)
+        return KeyboardWindowSelection.choose(
+            focused: focusedWindow,
+            ancestor: focusedElement.flatMap(windowAncestor(of:)),
+            main: attributeElement(of: application, name: kAXMainWindowAttribute),
+            windows: attributeElements(of: application, name: kAXWindowsAttribute))
+    }
+
+    private static func windowAncestor(of element: AXUIElement) -> AXUIElement? {
+        var current = element
+        for _ in 0..<30 {
+            guard let parent = attributeElement(of: current, name: kAXParentAttribute) else { return nil }
+            if (try? AccessibilityField.stringValue(parent, kAXRoleAttribute)) == kAXWindowRole {
+                return parent
+            }
+            current = parent
+        }
+        return nil
     }
 
     static func focusedElement(of pid: pid_t) -> AXUIElement? {
@@ -248,12 +326,16 @@ struct KeyboardField {
     }
 
     static func isActiveTarget(_ pid: pid_t) -> Bool {
+        activePID() == pid
+    }
+
+    static func activePID() -> pid_t? {
         let system = AXUIElementCreateSystemWide()
         if let focusedApp = attributeElement(of: system, name: kAXFocusedApplicationAttribute),
            let focusedPID = processID(of: focusedApp) {
-            return focusedPID == pid
+            return focusedPID
         }
-        return NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
+        return NSWorkspace.shared.frontmostApplication?.processIdentifier
     }
 
     static func sameTarget(_ lhs: AXUIElement, _ rhs: AXUIElement) -> Bool {
@@ -277,6 +359,13 @@ struct KeyboardField {
         guard AXUIElementCopyAttributeValue(parent, name as CFString, &raw) == .success,
               let raw, CFGetTypeID(raw) == AXUIElementGetTypeID() else { return nil }
         return (raw as! AXUIElement)
+    }
+
+    private static func attributeElements(of parent: AXUIElement, name: String) -> [AXUIElement] {
+        var raw: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(parent, name as CFString, &raw) == .success,
+              let raw, CFGetTypeID(raw) == CFArrayGetTypeID() else { return [] }
+        return (raw as? [AXUIElement]) ?? []
     }
 
     private static func selectedRange(of element: AXUIElement?) -> AXValue? {
@@ -431,7 +520,11 @@ enum CapturedInput {
             } else {
                 try await field.replaceIfUnchanged(with: replacement)
             }
-        case .keyboard(let field): try await field.replaceIfUnchanged(with: replacement)
+        case .keyboard(let field):
+            ReplacementDiagnostics.stage("focusRestoreBegin")
+            try await field.restoreFrontmostForReplacement()
+            ReplacementDiagnostics.stage("focusRestored")
+            try await field.replaceIfUnchanged(with: replacement)
         }
     }
 

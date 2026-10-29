@@ -7,9 +7,38 @@ enum KeychainError: Error {
 
 enum APIKeyStore {
     private static let service = "com.sensedraft.mac.openai"
-    private static let account = "api-key"
 
     static func load() throws -> String? {
+        try ProviderKeyStore.load(service: service)
+    }
+
+    static func save(_ key: String) throws {
+        try ProviderKeyStore.save(key, service: service)
+    }
+
+    static func remove() throws {
+        try ProviderKeyStore.remove(service: service)
+    }
+}
+
+enum ProviderKeyStore {
+    private static let account = "api-key"
+
+    static func contains(service: String) throws -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        let status = SecItemCopyMatching(query as CFDictionary, nil)
+        if status == errSecItemNotFound { return false }
+        guard status == errSecSuccess else { throw KeychainError.failure(status) }
+        return true
+    }
+
+    static func load(service: String) throws -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -27,7 +56,7 @@ enum APIKeyStore {
         return key
     }
 
-    static func save(_ key: String) throws {
+    static func save(_ key: String, service: String) throws {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -43,7 +72,7 @@ enum APIKeyStore {
         guard addStatus == errSecSuccess else { throw KeychainError.failure(addStatus) }
     }
 
-    static func remove() throws {
+    static func remove(service: String) throws {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -51,5 +80,30 @@ enum APIKeyStore {
         ]
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw KeychainError.failure(status) }
+    }
+}
+
+@MainActor
+final class ProviderCredentialCache {
+    private let loader: (String) throws -> String?
+    private var values: [String: String] = [:]
+
+    init(loader: @escaping (String) throws -> String?) {
+        self.loader = loader
+    }
+
+    func load(service: String) throws -> String? {
+        if let value = values[service] { return value }
+        guard let value = try loader(service) else { return nil }
+        values[service] = value
+        return value
+    }
+
+    func recordSave(_ value: String, service: String) {
+        values[service] = value
+    }
+
+    func remove(service: String) {
+        values.removeValue(forKey: service)
     }
 }

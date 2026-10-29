@@ -28,8 +28,9 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         settings.refreshStoredCredentials()
         setupMenuBar()
         review.model.onRegenerate = { [weak self] in self?.regenerate() }
-        review.model.onCopy = { [weak self] in self?.copyEnglish() }
+        review.model.onCopyCandidate = { [weak self] in self?.copyEnglish(from: $0) }
         review.model.onReplace = { [weak self] in self?.replace() }
+        review.model.onSelectCandidate = { [weak self] in self?.selectedCandidateChanged() }
         review.model.onOpenHistory = { [weak self] in self?.settingsWindow.show(tab: .history) }
         review.model.onClose = { [weak self] in self?.review.close() }
         review.onDismiss = { [weak self] in self?.discardSession() }
@@ -166,7 +167,7 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         review.model.reason = nil
         review.model.lastGeneratedChinese = ""
         review.model.richTextRisk = field.richTextRisk
-        review.model.providerLabel = settings.provider == .chatGPTPlan ? "Using ChatGPT plan" : "Using OpenAI API Key"
+        review.model.providerLabel = "Comparing AI results"
         switch field {
         case .keyboard:
             review.model.captureNotice = "Keyboard capture: caret may move to the end. Return to the original field before Replace."
@@ -179,8 +180,8 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         if case .accessibility = field { review.model.canRestoreFocus = true }
         else { review.model.canRestoreFocus = false }
         review.model.message = "Analyzing…"
-        review.show(near: field.bounds)
         requestAnalysis(chineseIntent: nil)
+        review.show(near: field.bounds)
     }
 
     private func showCaptureError(_ error: Error) {
@@ -200,13 +201,19 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
 
     private func requestAnalysis(chineseIntent: String?) {
         guard let field = captured else { return }
-        let selectedProvider = settings.provider
-        let selectedModel = settings.model
-        let selectedPlanModel = settings.planModel
         requestTask?.cancel()
         review.model.isReady = false
         review.model.captureFailed = false
         review.model.reason = nil
+        review.model.beginResults(providers: AIProviderChoice.allCases.compactMap { choice in
+            guard settings.enabledProviders.contains(choice), settings.resultProviders.contains(choice) else { return nil }
+            switch choice {
+            case .apiKey: return "OpenAI"
+            case .chatGPTPlan: return "ChatGPT plan"
+            case .deepSeek: return "DeepSeek"
+            case .kimi: return "Kimi"
+            }
+        })
         do {
             let input = try AnalysisInput(source: field.source, locale: settings.locale,
                                           chineseIntent: chineseIntent, preferences: settings.writingPreferences)
@@ -217,46 +224,49 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
             requestTask = Task { [weak self] in
                 do {
                     guard let self else { return }
-                    let provider: any LanguageService
-                    switch selectedProvider {
-                    case .apiKey:
-                        guard let key = try APIKeyStore.load(), !key.isEmpty else {
-                            self.settingsWindow.show(tab: .ai)
-                            throw OpenAIProviderError.missingKey
-                        }
-                        provider = OpenAIProvider(key: key, model: selectedModel)
-                    case .chatGPTPlan:
-                        guard let account = try await ChatGPTAuth.validAccount() else {
-                            self.settingsWindow.show(tab: .ai)
-                            throw ChatGPTAuthError.missingPlanPermission
-                        }
-                        guard !selectedPlanModel.isEmpty else {
-                            self.settingsWindow.show(tab: .ai)
-                            throw ChatGPTPlanError.noModels
-                        }
-                        provider = ChatGPTPlanProvider(token: account.accessToken, model: selectedPlanModel)
-                    }
-                    let result = try await provider.analyze(input)
+                    let services = try await self.configuredServices()
                     guard !Task.isCancelled, self.session?.generation == newSession.generation else { return }
-                    self.review.model.english = result.english
-                    self.review.model.chinese = result.chineseMeaning
-                    self.review.model.lastGeneratedChinese = result.chineseMeaning
-                    self.review.model.ambiguity = result.ambiguity
-                    self.review.model.reason = result.reason
-                    self.review.model.worthChanging = result.worthChanging
-                    self.review.model.isReady = true
-                    self.review.model.message = result.worthChanging
+                    guard !services.isEmpty else {
+                        self.settingsWindow.show(tab: .ai)
+                        self.review.model.message = "Enable and configure an AI source, then turn on Show in results in Settings → AI Services."
+                        self.review.model.isLoading = false
+                        return
+                    }
+                    self.review.model.beginResults(providers: services.map(\.0))
+                    await withTaskGroup(of: (String, AnalysisResult?, String?).self) { group in
+                        for item in services {
+                            group.addTask {
+                                do {
+                                    return (item.0, try await item.1.analyze(input), nil)
+                                } catch {
+                                    return (item.0, nil, ProviderResultErrorMessage.describe(error, provider: item.0))
+                                }
+                            }
+                        }
+                        for await (label, result, error) in group {
+                            guard !Task.isCancelled,
+                                  self.session?.generation == newSession.generation else { continue }
+                            if let result {
+                                self.review.model.receive(ReviewCandidate(provider: label, result: result))
+                                self.review.model.message = ""
+                                self.recordSelectedCandidate()
+                            } else if let error {
+                                self.review.model.fail(provider: label, message: error)
+                            }
+                        }
+                    }
+                    guard !Task.isCancelled, self.session?.generation == newSession.generation else { return }
+                    let candidates = self.review.model.candidates
+                    let failures = self.review.model.providerErrors
+                    self.review.model.message = candidates.isEmpty ?
+                        "AI analysis failed. Check each service result above." :
+                        !failures.isEmpty ? "Some AI results failed; available results can still be used." :
+                        self.review.model.worthChanging
                         ? (field.usedKeyboardFallback && !self.review.model.canRestoreFocus
                             ? "Return to the original field, then press your Replace shortcut."
                             : "")
                         : "Already natural — no change suggested."
                     self.review.model.isLoading = false
-                    if self.settings.historyEnabled, let historyID = self.historyID {
-                        self.history.record(HistoryEntry(id: historyID, source: field.source,
-                            english: result.english, chinese: result.chineseMeaning,
-                            reason: result.reason, ambiguity: result.ambiguity,
-                            provider: self.review.model.providerLabel))
-                    }
                 } catch {
                     guard let self, !Task.isCancelled, self.session?.generation == newSession.generation else { return }
                     self.review.model.message = self.analysisErrorMessage(error)
@@ -268,10 +278,51 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func configuredServices() async throws -> [(String, any LanguageService)] {
+        var services: [(String, any LanguageService)] = []
+        for choice in AIProviderChoice.allCases
+            where settings.enabledProviders.contains(choice) && settings.resultProviders.contains(choice) {
+            switch choice {
+            case .apiKey:
+                if let key = try settings.storedKey(service: "com.sensedraft.mac.openai"), !key.isEmpty {
+                    services.append(("OpenAI", OpenAIProvider(key: key, model: settings.model)))
+                }
+            case .chatGPTPlan:
+                if let account = try? await ChatGPTAuth.validAccount(), !settings.planModel.isEmpty {
+                    services.append(("ChatGPT plan", ChatGPTPlanProvider(token: account.accessToken, model: settings.planModel)))
+                }
+            case .deepSeek:
+                if let key = try settings.storedKey(service: "com.sensedraft.mac.deepseek"), !key.isEmpty {
+                    services.append(("DeepSeek", ChatCompletionsProvider(service: .deepSeek, key: key, model: settings.deepSeekModel)))
+                }
+            case .kimi:
+                if let key = try settings.storedKey(service: "com.sensedraft.mac.kimi"), !key.isEmpty {
+                    services.append(("Kimi", ChatCompletionsProvider(service: .kimi(settings.kimiRegion), key: key, model: settings.kimiModel)))
+                }
+            }
+        }
+        return services
+    }
+
+    private func selectedCandidateChanged() {
+        review.model.message = review.model.worthChanging ? "" : "Already natural — no change suggested."
+        recordSelectedCandidate()
+    }
+
+    private func recordSelectedCandidate() {
+        guard settings.historyEnabled, let historyID, let field = captured,
+              review.model.candidates.indices.contains(review.model.selectedCandidateIndex) else { return }
+        let selected = review.model.candidates[review.model.selectedCandidateIndex]
+        history.record(HistoryEntry(id: historyID, source: field.source,
+            english: review.model.english, chinese: review.model.chinese,
+            reason: selected.reason, ambiguity: selected.ambiguity,
+            provider: selected.provider))
+    }
+
     private func replace() {
         guard !isReplacing else { return }
         guard let field = captured, let session,
-              review.model.isReady, !review.model.isLoading else { return }
+              review.model.isReady else { return }
         guard !review.model.english.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               review.model.english != field.source else {
             review.model.message = "No changed English to replace."
@@ -283,12 +334,15 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         review.model.isLoading = true
+        review.model.isReplacing = true
         isReplacing = true
+        requestTask?.cancel()
         ReplacementDiagnostics.begin(route: field.usedKeyboardFallback ? "keyboard" : "accessibility")
         replaceTask = Task { [weak self] in
             guard let self else { return }
             defer {
                 self.review.model.isLoading = false
+                self.review.model.isReplacing = false
                 self.isReplacing = false
                 self.replaceTask = nil
             }
@@ -317,31 +371,37 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
             } catch {
                 guard !Task.isCancelled else { return }
                 ReplacementDiagnostics.finish(error: error)
+                for provider in self.review.model.providerNames
+                    where !self.review.model.candidates.contains(where: { $0.provider == provider })
+                    && self.review.model.providerErrors[provider] == nil {
+                    self.review.model.fail(provider: provider, message: "Analysis stopped after Replace was pressed.")
+                }
                 self.review.model.message = self.replaceErrorMessage(error)
                 self.review.show(near: field.bounds)
             }
         }
     }
 
-    private func copyEnglish() {
-        guard review.model.isReady, !review.model.english.isEmpty else { return }
+    private func copyEnglish(from provider: String) {
+        guard let english = review.model.candidates.first(where: { $0.provider == provider })?.english,
+              !english.isEmpty else { return }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(review.model.english, forType: .string)
+        NSPasteboard.general.setString(english, forType: .string)
         review.model.message = "English copied."
     }
 
     private func analysisErrorMessage(_ error: Error) -> String {
         if case OpenAIProviderError.missingKey = error {
-            return "Add an OpenAI API key in Settings → AI."
+            return "Add an OpenAI API key in Settings → AI Services."
         }
         if case ChatGPTAuthError.missingPlanPermission = error {
-            return "Connect an eligible ChatGPT account in Settings → AI."
+            return "Connect an eligible ChatGPT account in Settings → AI Services."
         }
         if case ChatGPTPlanError.noModels = error {
-            return "Choose an available ChatGPT model in Settings → AI."
+            return "Choose an available ChatGPT model in Settings → AI Services."
         }
         if case OpenAIProviderError.httpStatus(401) = error {
-            return "OpenAI rejected this API key. Check it in Settings → AI."
+            return "OpenAI rejected this API key. Check it in Settings → AI Services."
         }
         if case OpenAIProviderError.httpStatus(429) = error {
             return "OpenAI API rate or usage limit reached. Check your API account."
@@ -351,16 +411,16 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
                 return "This ChatGPT account or workspace is not eligible for plan usage."
             }
             if code == "subscription_sharing_usage_limit_exceeded" {
-                return "ChatGPT plan usage limit reached. Review usage in Settings → AI."
+                return "ChatGPT plan usage limit reached. Review usage in Settings → AI Services."
             }
             if code == "subscription_sharing_usage_unavailable" {
                 return "ChatGPT usage is temporarily unavailable. Try again later."
             }
-            return "ChatGPT request was rejected (HTTP \(status)\(code.map { ", \($0)" } ?? "")). Check your account in Settings → AI."
+            return "ChatGPT request was rejected (HTTP \(status)\(code.map { ", \($0)" } ?? "")). Check your account in Settings → AI Services."
         }
         if case StreamDecoderError.failed(let code) = error,
            code == "subscription_sharing_usage_limit_exceeded" || code == "subscription_sharing_usage_unavailable" {
-            return "ChatGPT plan usage is unavailable or at its limit. Review ChatGPT usage in Settings → AI."
+            return "ChatGPT plan usage is unavailable or at its limit. Review ChatGPT usage in Settings → AI Services."
         }
         if case StreamDecoderError.incomplete = error {
             return "ChatGPT stopped before finishing this analysis. Try again."
@@ -372,7 +432,7 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
             return "ChatGPT returned an unreadable response event. Try again."
         }
         if case ChatGPTPlanError.invalidResponse = error {
-            return "ChatGPT returned an unreadable result. Try again or use an API key in Settings → AI."
+            return "ChatGPT returned an unreadable result. Try again or use an API key in Settings → AI Services."
         }
         return "Analysis failed: \(error)"
     }
@@ -399,6 +459,8 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         review.model.ambiguity = nil
         review.model.richTextRisk = false
         review.model.providerLabel = ""
+        review.model.beginResults(providers: [])
+        review.model.isReplacing = false
         review.model.captureNotice = ""
         review.model.usedKeyboardFallback = false
         review.model.canRestoreFocus = false
@@ -420,6 +482,8 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
             "The active editor changed during capture. Focus the input and press Analyze again."
         case KeyboardFieldError.noTarget:
             "Could not identify the active editor window. No text was sent."
+        case KeyboardFieldError.windowUnavailable:
+            "Could not identify this editor's window through Accessibility. Focus its input and try Analyze again. No text was sent."
         case KeyboardFieldError.eventFailed:
             "Could not send the editor's Copy shortcut. Release the shortcut keys and try again."
         case AccessibilityError.unsupportedRead:
