@@ -1,16 +1,19 @@
 # Editor compatibility
 
-The table records direct observations from the packaged `SenseDraft.app`. A successful compile is not evidence that a third-party editor supports Accessibility writes.
+On October 29, 2026, the user reported that **Analyze triggers and recognizes text in every non-terminal editor tested so far**. Terminal utility apps were the exception: text recognition did not work there. The report did not identify every app/version or confirm that the entire field was captured in each case. Recognition also does not establish that Replace works.
+
+The table keeps app-specific full-field and replacement evidence separate from that overall report. A successful compile is not evidence that a third-party editor supports Accessibility writes.
 
 | App / editor | Read full field | Replace full field | Notes |
 | --- | --- | --- | --- |
-| TextEdit plain text | Pending manual test | Pending manual test | Native AppKit |
-| Safari textarea | Pending manual test | Pending manual test | Browser editor |
-| Chrome textarea | Pending manual test | Pending manual test | Browser editor |
-| Safari/Chrome contenteditable | Pending manual test | Pending manual test | Rich text may need copy fallback |
-| Slack message composer | User observed `windowUnavailable`; updated resolver needs retest | Pending packaged-app test | Slack exposes a settable text entry area, but the user's capture failed because SenseDraft could not resolve its window through the focused or main window attributes. The updated keyboard fallback also checks the focused element's window ancestor and a single window in the application's window list. Capture and replacement need a live retest. |
-| Feishu message composer | User confirmed intermittently; `windowUnavailable` observed on October 23 | User confirmed intermittently; latest change needs retest | The installed Feishu bundle is `com.electron.lark`, with a Chromium `Lark Framework` and separate messenger WebViews. Its AX text entry area exposes trailing zero-width placeholder lines absent from copied visible text. The same running SenseDraft process logged two Feishu replacements with matching passive readback on October 23, then the user showed a capture failure because AX did not identify the editor window. Capture now retries window resolution briefly while the source app remains frontmost and logs only whether a focused element exists and how many AX windows are exposed. This needs a fresh packaged-app retest. |
-| Sublime Text editor | Keyboard fallback built; live test pending | Keyboard fallback built; live test pending | In the observed Sublime window, Accessibility exposed the window and title but no readable focused editor value. The generic shortcut-triggered Select All/Copy/Paste fallback now handles this capability gap without a plugin; capture, clipboard restoration, and replacement still need a packaged-app test. |
+| TextEdit plain text | Covered by the user's overall non-terminal recognition report; full-field check pending | Pending manual test | Native AppKit; app-specific result not recorded |
+| Safari textarea | Covered by the overall report; full-field check pending | Pending manual test | Browser editor; app-specific result not recorded |
+| Chrome textarea | Covered by the overall report; full-field check pending | Pending manual test | Browser editor; app-specific result not recorded |
+| Safari/Chrome contenteditable | Covered by the overall report; full-field check pending | Pending manual test | Rich text may need copy fallback; app-specific result not recorded |
+| Slack message composer | Covered by the current overall report; full-field check pending | Pending packaged-app test | An earlier attempt returned `windowUnavailable`. The updated resolver checks the focused element's window ancestor and a single window in the application's window list. App-specific capture and replacement details still need recording. |
+| Feishu message composer | Covered by the current overall report; full-field check pending | User confirmed intermittently; latest change needs retest | Earlier attempts were intermittent, including `windowUnavailable` on October 23. Capture now retries window resolution briefly while the source app remains frontmost. The current report establishes text recognition across tested non-terminal editors, but not a Feishu-specific replacement result. |
+| Sublime Text editor | Covered by the current overall report; full-field check pending | Keyboard fallback built; live test pending | Earlier Accessibility inspection exposed the window but no readable editor value. The keyboard fallback may capture text; app-specific full-field and replacement checks remain pending. |
+| Terminal utility apps | User reports text recognition does not work | Not verified | Specific terminal apps and versions were not recorded. |
 
 ## Bob comparison
 

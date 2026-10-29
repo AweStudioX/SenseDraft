@@ -449,8 +449,13 @@ private struct ReviewView: View {
                         .font(.caption).foregroundStyle(.orange)
                 }
             } else if let error = model.providerErrors[provider] {
-                Text(error).font(.caption).foregroundStyle(.secondary)
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
             } else {
                 RoundedRectangle(cornerRadius: 5).fill(Color.secondary.opacity(0.12))
                     .frame(height: 22).frame(maxWidth: 280, alignment: .leading)
