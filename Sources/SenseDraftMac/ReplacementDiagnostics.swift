@@ -25,6 +25,11 @@ enum ReplacementDiagnostics {
         logger.notice("attempt=\(activeAttempt, privacy: .public) stage=\(name, privacy: .public)")
     }
 
+    static func sourceMismatch(kind: String, capturedLength: Int, currentLength: Int) {
+        guard let activeAttempt else { return }
+        logger.notice("attempt=\(activeAttempt, privacy: .public) sourceMismatch=\(kind, privacy: .public) capturedUTF16=\(capturedLength, privacy: .public) currentUTF16=\(currentLength, privacy: .public)")
+    }
+
     static func finish(error: Error? = nil) {
         guard let activeAttempt else { return }
         if let error {

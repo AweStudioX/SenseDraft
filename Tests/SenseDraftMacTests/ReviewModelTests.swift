@@ -34,6 +34,40 @@ final class ReviewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testResultCanWaitForPanelResizeBeforeBecomingVisibleOrReplaceable() throws {
+        let model = ReviewModel()
+        model.source = "Original"
+        model.beginResults(providers: ["DeepSeek"])
+        model.receive(try candidate("DeepSeek", english: "Revised"), deferReveal: true)
+
+        XCTAssertFalse(model.revealedProviders.contains("DeepSeek"))
+        XCTAssertFalse(model.hasReplacement)
+
+        model.revealPendingResults()
+        XCTAssertTrue(model.revealedProviders.contains("DeepSeek"))
+        XCTAssertTrue(model.hasReplacement)
+    }
+
+    @MainActor
+    func testCopyUsesOnlyTheSelectedRevealedSuggestion() throws {
+        let model = ReviewModel()
+        model.beginResults(providers: ["ChatGPT plan", "DeepSeek"])
+        model.receive(try candidate("ChatGPT plan", english: "First"))
+        model.receive(try candidate("DeepSeek", english: "Second"))
+        var copiedProviders: [String] = []
+        model.onCopyCandidate = { copiedProviders.append($0) }
+
+        model.selectCandidate(at: 1)
+        model.copySelectedSuggestion()
+        XCTAssertEqual(copiedProviders, ["DeepSeek"])
+
+        model.beginResults(providers: ["DeepSeek"])
+        model.receive(try candidate("DeepSeek", english: "Third"), deferReveal: true)
+        model.copySelectedSuggestion()
+        XCTAssertEqual(copiedProviders, ["DeepSeek"])
+    }
+
+    @MainActor
     func testPreferredProviderTakesSelectionWhenItArrivesLater() throws {
         UserDefaults.standard.set("ChatGPT plan", forKey: preferenceKey)
         let model = ReviewModel()
@@ -140,6 +174,120 @@ final class ReviewModelTests: XCTestCase {
         model.isReplacing = true
         XCTAssertFalse(model.replaceFromPanel())
         XCTAssertEqual(replacementCount, 0)
+    }
+
+    @MainActor
+    func testUnchangedSelectedEnglishExplainsWhyReplaceIsUnavailable() throws {
+        let model = ReviewModel()
+        model.source = "Original"
+        model.beginResults(providers: ["DeepSeek"])
+        XCTAssertNil(model.replacementUnavailableReason)
+
+        model.receive(try candidate("DeepSeek", english: "Original"))
+        XCTAssertEqual(model.replacementUnavailableReason,
+                       "Selected suggestion matches the original. Edit it to enable Replace.")
+
+        model.editEnglish("Revised", for: "DeepSeek")
+        XCTAssertNil(model.replacementUnavailableReason)
+    }
+
+    @MainActor
+    func testRegenerateShortcutUsesEditedChineseAndRespectsLoadingState() throws {
+        let model = ReviewModel()
+        model.source = "Original"
+        model.beginResults(providers: ["DeepSeek"])
+        model.receive(try candidate("DeepSeek", english: "Revised"))
+        var regenerated = 0
+        model.onRegenerate = { regenerated += 1 }
+
+        XCTAssertEqual(model.regenerateTitle, "Regenerate")
+        XCTAssertNil(model.editedChineseIntent)
+        XCTAssertTrue(model.regenerateFromPanel())
+
+        model.editChinese("改过的中文", for: "DeepSeek")
+        XCTAssertEqual(model.regenerateTitle, "Regenerate from meaning check")
+        XCTAssertEqual(model.editedChineseIntent, "改过的中文")
+        XCTAssertTrue(model.regenerateFromPanel())
+
+        model.isLoading = true
+        XCTAssertFalse(model.regenerateFromPanel())
+        XCTAssertEqual(regenerated, 2)
+
+        model.editChinese(" ", for: "DeepSeek")
+        XCTAssertNil(model.editedChineseIntent)
+        XCTAssertEqual(model.regenerateTitle, "Regenerate")
+    }
+
+    @MainActor
+    func testLateProviderResultDoesNotTurnEditedMeaningIntoGeneratedMeaning() throws {
+        let model = ReviewModel()
+        model.source = "Original"
+        model.beginResults(providers: ["DeepSeek", "Kimi"])
+        model.receive(try candidate("DeepSeek", english: "First"))
+        model.editChinese("用户纠正的意思", for: "DeepSeek")
+
+        model.receive(try candidate("Kimi", english: "Second"))
+
+        XCTAssertEqual(model.editedChineseIntent, "用户纠正的意思")
+        XCTAssertEqual(model.lastGeneratedChinese, "中文")
+    }
+
+    @MainActor
+    func testRegenerationKeepsLatestUserCorrectionWithoutFurtherEdits() throws {
+        let model = ReviewModel()
+        model.source = "Original"
+        var requestedIntents: [String?] = []
+        model.onRegenerate = { requestedIntents.append(model.editedChineseIntent) }
+        model.beginResults(providers: ["DeepSeek"])
+        model.receive(try candidate("DeepSeek", english: "First"))
+
+        model.editChinese("第一次纠正", for: "DeepSeek")
+        XCTAssertTrue(model.regenerateFromPanel())
+        model.beginResults(providers: ["DeepSeek"])
+        model.receive(try candidate("DeepSeek", english: "Second", chinese: "第一次的释义"))
+
+        model.editChinese("第二次纠正", for: "DeepSeek")
+        XCTAssertTrue(model.regenerateFromPanel())
+        model.beginResults(providers: ["DeepSeek"])
+        model.receive(try candidate("DeepSeek", english: "Third", chinese: "第二次的释义"))
+        XCTAssertTrue(model.regenerateFromPanel())
+
+        XCTAssertEqual(requestedIntents, ["第一次纠正", "第二次纠正", "第二次纠正"])
+    }
+
+    @MainActor
+    func testNewCaptureClearsEarlierConfirmedMeaning() throws {
+        let model = ReviewModel()
+        model.source = "Original"
+        model.beginResults(providers: ["DeepSeek"])
+        model.receive(try candidate("DeepSeek", english: "First"))
+        model.onRegenerate = {}
+        model.editChinese("旧输入的纠正", for: "DeepSeek")
+        XCTAssertTrue(model.regenerateFromPanel())
+
+        model.resetChineseIntent()
+        model.source = "New source"
+        model.beginResults(providers: ["DeepSeek"])
+        model.receive(try candidate("DeepSeek", english: "New result"))
+
+        XCTAssertNil(model.editedChineseIntent)
+    }
+
+    @MainActor
+    func testEditingAnotherMeaningCardMakesItTheRegenerationSource() throws {
+        let model = ReviewModel()
+        model.beginResults(providers: ["DeepSeek", "Kimi"])
+        model.receive(try candidate("DeepSeek", english: "First"))
+        model.receive(try candidate("Kimi", english: "Second"))
+
+        model.editChinese("Kimi 的纠正", for: "Kimi")
+
+        XCTAssertEqual(model.editedChineseIntent, "Kimi 的纠正")
+    }
+
+    private func candidate(_ provider: String, english: String, chinese: String) throws -> ReviewCandidate {
+        ReviewCandidate(provider: provider,
+                        result: try AnalysisResult(english: english, chineseMeaning: chinese, ambiguity: nil))
     }
 
     private func candidate(_ provider: String, english: String) throws -> ReviewCandidate {

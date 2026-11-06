@@ -33,6 +33,13 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         review.model.onSelectCandidate = { [weak self] in self?.selectedCandidateChanged() }
         review.model.onOpenHistory = { [weak self] in self?.settingsWindow.show(tab: .history) }
         review.model.onClose = { [weak self] in self?.review.close() }
+        review.model.onLanguagesChanged = { [weak self] in
+            guard let self else { return }
+            self.settings.locale = self.review.model.targetLocale
+            self.settings.referenceLocale = self.review.model.referenceLocale
+            self.review.model.resetChineseIntent()
+            self.requestAnalysis(chineseIntent: nil)
+        }
         review.onDismiss = { [weak self] in self?.discardSession() }
         keyboardLayoutObserver = NotificationCenter.default.addObserver(
             forName: NSTextInputContext.keyboardSelectionDidChangeNotification,
@@ -157,28 +164,32 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func presentCaptured(_ field: CapturedInput) {
+        review.prepareForNewCapture()
         captured = field
         historyID = UUID()
         review.model.captureFailed = false
         review.model.source = field.source
+        review.model.targetLocale = settings.locale
+        review.model.referenceLocale = settings.referenceLocale
         review.model.english = ""
         review.model.chinese = ""
         review.model.ambiguity = nil
         review.model.reason = nil
         review.model.lastGeneratedChinese = ""
+        review.model.resetChineseIntent()
         review.model.richTextRisk = field.richTextRisk
-        review.model.providerLabel = "Comparing AI results"
         switch field {
+        case .keyboard where field.canRestoreFocusFromPanel:
+            review.model.captureNotice = ""
         case .keyboard:
-            review.model.captureNotice = "Keyboard capture: caret may move to the end. Return to the original field before Replace."
+            review.model.captureNotice = "Keyboard replacement · Return to the original input before replacing"
         case .accessibility where field.usedKeyboardFallback:
-            review.model.captureNotice = "This editor uses keyboard replacement. SenseDraft will refocus the original input before replacing."
+            review.model.captureNotice = ""
         default:
             review.model.captureNotice = ""
         }
         review.model.usedKeyboardFallback = field.usedKeyboardFallback
-        if case .accessibility = field { review.model.canRestoreFocus = true }
-        else { review.model.canRestoreFocus = false }
+        review.model.canRestoreFocus = field.canRestoreFocusFromPanel
         review.model.message = "Analyzing…"
         requestAnalysis(chineseIntent: nil)
         review.show(near: field.bounds)
@@ -194,9 +205,7 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func regenerate() {
-        let editedChinese = review.model.chinese.trimmingCharacters(in: .whitespacesAndNewlines)
-        let chineseIntent = editedChinese != review.model.lastGeneratedChinese ? editedChinese : nil
-        requestAnalysis(chineseIntent: chineseIntent)
+        requestAnalysis(chineseIntent: review.model.editedChineseIntent)
     }
 
     private func requestAnalysis(chineseIntent: String?) {
@@ -207,15 +216,19 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         review.model.reason = nil
         review.model.beginResults(providers: AIProviderChoice.allCases.compactMap { choice in
             guard settings.enabledProviders.contains(choice), settings.resultProviders.contains(choice) else { return nil }
+            if choice == .appleLocal && !AppleLocalProvider.isAvailable { return nil }
             switch choice {
             case .apiKey: return "OpenAI"
             case .chatGPTPlan: return "ChatGPT plan"
             case .deepSeek: return "DeepSeek"
             case .kimi: return "Kimi"
+            case .claude, .gemini, .openRouter, .qwen, .ollama, .custom, .appleLocal:
+                return choice.title
             }
         })
         do {
-            let input = try AnalysisInput(source: field.source, locale: settings.locale,
+            let input = try AnalysisInput(source: field.source, locale: review.model.targetLocale,
+                                          referenceLocale: review.model.referenceLocale,
                                           chineseIntent: chineseIntent, preferences: settings.writingPreferences)
             let newSession = AnalysisSession(snapshot: TargetSnapshot(appID: field.appID, elementID: String(field.pid), source: field.source))
             session = newSession
@@ -247,7 +260,8 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
                             guard !Task.isCancelled,
                                   self.session?.generation == newSession.generation else { continue }
                             if let result {
-                                self.review.model.receive(ReviewCandidate(provider: label, result: result))
+                                self.review.model.receive(ReviewCandidate(provider: label, result: result),
+                                                          deferReveal: true)
                                 self.review.model.message = ""
                                 self.recordSelectedCandidate()
                             } else if let error {
@@ -299,6 +313,22 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
                 if let key = try settings.storedKey(service: "com.sensedraft.mac.kimi"), !key.isEmpty {
                     services.append(("Kimi", ChatCompletionsProvider(service: .kimi(settings.kimiRegion), key: key, model: settings.kimiModel)))
                 }
+            case .claude, .gemini, .openRouter, .qwen:
+                if let keychainService = choice.keychainService,
+                   let key = try settings.storedKey(service: keychainService), !key.isEmpty {
+                    services.append((choice.title, settings.additionalService(for: choice, key: key)))
+                }
+            case .custom:
+                if let keychainService = choice.keychainService {
+                    let key = try settings.storedKey(service: keychainService) ?? ""
+                    services.append((choice.title, settings.additionalService(for: choice, key: key)))
+                }
+            case .ollama:
+                services.append((choice.title, settings.additionalService(for: choice, key: "")))
+            case .appleLocal:
+                if AppleLocalProvider.isAvailable {
+                    services.append((choice.title, AppleLocalProvider()))
+                }
             }
         }
         return services
@@ -316,20 +346,21 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         history.record(HistoryEntry(id: historyID, source: field.source,
             english: review.model.english, chinese: review.model.chinese,
             reason: selected.reason, ambiguity: selected.ambiguity,
-            provider: selected.provider))
+            provider: selected.provider, targetLocale: review.model.targetLocale,
+            referenceLocale: review.model.referenceLocale))
     }
 
     private func replace() {
         guard !isReplacing else { return }
         guard let field = captured, let session,
-              review.model.isReady else { return }
+              review.model.isReady, review.model.isSelectedResultRevealed else { return }
         guard !review.model.english.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               review.model.english != field.source else {
-            review.model.message = "No changed English to replace."
+            review.model.message = "No changed suggestion to replace."
             return
         }
         if field.richTextRisk && !settings.allowFormattingLoss {
-            review.model.message = "This editor has formatting. Enable formatting loss in Settings → Home or copy the English."
+            review.model.message = "This editor has formatting. Enable formatting loss in Settings → Home or copy the suggestion."
             review.show(near: field.bounds)
             return
         }
@@ -387,7 +418,7 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
               !english.isEmpty else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(english, forType: .string)
-        review.model.message = "English copied."
+        review.model.message = "Suggestion copied."
     }
 
     private func analysisErrorMessage(_ error: Error) -> String {
@@ -453,12 +484,12 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         review.model.english = ""
         review.model.chinese = ""
         review.model.lastGeneratedChinese = ""
+        review.model.resetChineseIntent()
         review.model.message = ""
         review.model.worthChanging = true
         review.model.reason = nil
         review.model.ambiguity = nil
         review.model.richTextRisk = false
-        review.model.providerLabel = ""
         review.model.beginResults(providers: [])
         review.model.isReplacing = false
         review.model.captureNotice = ""
@@ -489,8 +520,8 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         case AccessibilityError.unsupportedRead:
             "This editor does not expose its text through macOS Accessibility. No text was sent. Try a standard text field."
         case FieldError.protected: "Protected fields cannot be analyzed."
-        case FieldError.empty: "Type English in the focused field, then press Analyze."
-        case FieldError.nonEnglish: "This version supports English and Chinese input."
+        case FieldError.empty: "Type text in the focused field, then press Analyze."
+        case FieldError.nonEnglish: "This input could not be analyzed."
         case FieldError.notEditable, FieldError.unsupportedRole: "The focused control is not a supported editable text field."
         case AccessibilityError.noFocusedField: "Focus an editable text field, then press Analyze."
         default: "Could not read this input field: \(error)"
@@ -508,15 +539,15 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         case KeyboardFieldError.focusedFieldChanged:
             "The focused input changed before replacement. No keyboard replacement was sent."
         case KeyboardFieldError.sourceChanged:
-            "The draft text changed before replacement. No replacement was sent."
+            "The original input no longer matches this review. No replacement was sent; run Analyze again."
         case KeyboardFieldError.noTarget, KeyboardFieldError.unsupportedFocus:
             "Could not identify the original editor. Focus its text field and press Replace again."
         case KeyboardFieldError.notFrontmost:
             "The original app was not frontmost when Replace ran. Click its input field, then press Replace again."
         case KeyboardFieldError.windowUnavailable:
-            "The editor did not expose a focused or main window for replacement. Copy the English instead."
+            "The editor did not expose a focused or main window for replacement. Copy the suggestion instead."
         case KeyboardFieldError.clipboardUnavailable:
-            "Could not safely preserve the clipboard for replacement. Copy the English or simplify the clipboard contents before retrying."
+            "Could not safely preserve the clipboard for replacement. Copy the suggestion or simplify the clipboard contents before retrying."
         case KeyboardFieldError.copyFailed:
             "The editor did not provide its current text through Copy. The original text was not replaced."
         case KeyboardFieldError.tooLong:
@@ -526,7 +557,7 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         case KeyboardFieldError.eventCreationFailed:
             "macOS could not create a keyboard event for replacement. Check Accessibility permission for the current SenseDraft build."
         case KeyboardFieldError.writeUnverified:
-            "Could not verify the keyboard replacement. Check the original field before any retry; the English remains available to copy."
+            "Could not verify the keyboard replacement. Check the original field before any retry; the suggestion remains available to copy."
         case KeyboardFieldError.clipboardChanged:
             "The clipboard changed during replacement. Check the original field before retrying."
         case AccessibilityError.permissionDenied:
@@ -534,8 +565,8 @@ final class SenseDraftAppDelegate: NSObject, NSApplicationDelegate {
         case AccessibilityError.stale: "The original input or focus changed. Analyze again before replacing."
         case AccessibilityError.writeUnverified:
             "The editor accepted the replacement, but its updated text could not be confirmed. Check the original field before retrying."
-        case AccessibilityError.unsupportedWrite: "This editor does not support direct replacement. Copy the English instead."
-        default: "Replacement could not be verified. Copy the English or check the original field before retrying."
+        case AccessibilityError.unsupportedWrite: "This editor does not support direct replacement. Copy the suggestion instead."
+        default: "Replacement could not be verified. Copy the suggestion or check the original field before retrying."
         }
     }
 }

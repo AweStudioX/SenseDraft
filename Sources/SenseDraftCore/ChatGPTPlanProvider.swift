@@ -66,7 +66,7 @@ public struct ChatGPTPlanProvider: LanguageService {
             "store": false,
             "stream": true,
             "instructions": AnalysisPrompt.instructions(for: input),
-            "input": [["role": "user", "content": input.source]],
+            "input": [["role": "user", "content": AnalysisPrompt.userMessage(for: input)]],
             "text": ["format": ["type": "json_schema", "name": "sensedraft_analysis", "schema": schema, "strict": true]]
         ]
         var request = URLRequest(url: URL(string: "https://api.openai.com/v1/responses")!)

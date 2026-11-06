@@ -176,11 +176,31 @@ struct KeyboardField {
         let copied = try await selectAllAndCopy()
         ReplacementDiagnostics.stage("sourceCopied")
         ownedChangeCount = copied.changeCount
-        let sourceMatches = sourceFromAccessibility
-            ? EditorTextEquivalence.matchesAccessibilityAndCopy(accessibility: source,
-                                                                copied: copied.text)
-            : copied.text == source
-        guard sourceMatches else { throw KeyboardFieldError.sourceChanged }
+        let sourceMatches: Bool
+        if sourceFromAccessibility {
+            let currentAccessibility = focusedElement.flatMap { try? AccessibilityField.fullText(of: $0) }
+            let accessibilityMatches = currentAccessibility.map {
+                EditorTextEquivalence.matchesAccessibilityValues(source, $0)
+            }
+            let ordinaryCopyMatches = EditorTextEquivalence.matchesAccessibilityAndCopy(
+                accessibility: source, copied: copied.text)
+            let verifiedParagraphCopyMatches = accessibilityMatches == true
+                && EditorTextEquivalence.matchesVerifiedAccessibilityAndCopy(
+                    accessibility: source, copied: copied.text)
+            if verifiedParagraphCopyMatches && !ordinaryCopyMatches {
+                ReplacementDiagnostics.stage("copyOnlyTerminatorMatched")
+            }
+            sourceMatches = accessibilityMatches != false
+                && (ordinaryCopyMatches || verifiedParagraphCopyMatches)
+        } else {
+            sourceMatches = EditorTextEquivalence.matchesRepeatedCopies(source, copied.text)
+        }
+        guard sourceMatches else {
+            ReplacementDiagnostics.sourceMismatch(
+                kind: EditorTextEquivalence.repeatedCopyDifference(source, copied.text),
+                capturedLength: source.utf16.count, currentLength: copied.text.utf16.count)
+            throw KeyboardFieldError.sourceChanged
+        }
         ReplacementDiagnostics.stage("sourceMatched")
         try checkTarget()
         guard pasteboard.changeCount == copied.changeCount else { throw KeyboardFieldError.clipboardChanged }
@@ -457,6 +477,15 @@ private enum KeyboardEvent {
 enum CapturedInput {
     case accessibility(CapturedField)
     case keyboard(KeyboardField)
+
+    var canRestoreFocusFromPanel: Bool {
+        switch self {
+        case .accessibility: return true
+        case .keyboard(let field):
+            guard let focusedElement = field.focusedElement else { return false }
+            return !CFEqual(focusedElement, field.window)
+        }
+    }
 
     var source: String {
         switch self {

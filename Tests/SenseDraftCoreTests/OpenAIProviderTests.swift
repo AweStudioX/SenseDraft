@@ -69,6 +69,10 @@ final class OpenAIProviderTests: XCTestCase {
         let instructions = AnalysisPrompt.instructions(for: input)
         XCTAssertTrue(instructions.contains("authoritative Chinese"))
         XCTAssertTrue(instructions.contains("我可能会发给他"))
+        XCTAssertTrue(instructions.contains("Include every material detail"))
+        let userMessage = AnalysisPrompt.userMessage(for: input)
+        XCTAssertTrue(userMessage.contains(input.source))
+        XCTAssertTrue(userMessage.contains("我可能会发给他"))
     }
 
     func testCasualPreferencesKeepLowercaseOpeningAndMeaning() throws {

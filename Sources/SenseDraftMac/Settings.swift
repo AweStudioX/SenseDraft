@@ -26,6 +26,13 @@ enum AIProviderChoice: String, CaseIterable, Identifiable {
     case chatGPTPlan = "ChatGPT plan"
     case deepSeek = "DeepSeek"
     case kimi = "Kimi"
+    case claude = "Claude"
+    case gemini = "Gemini"
+    case openRouter = "OpenRouter"
+    case qwen = "Qwen"
+    case ollama = "Ollama"
+    case custom = "Custom endpoint"
+    case appleLocal = "Apple on-device"
     var id: String { rawValue }
 
     var title: String { self == .apiKey ? "OpenAI API" : rawValue }
@@ -34,7 +41,30 @@ enum AIProviderChoice: String, CaseIterable, Identifiable {
         case .apiKey: "com.sensedraft.mac.openai"
         case .deepSeek: "com.sensedraft.mac.deepseek"
         case .kimi: "com.sensedraft.mac.kimi"
-        case .chatGPTPlan: nil
+        case .claude: "com.sensedraft.mac.claude"
+        case .gemini: "com.sensedraft.mac.gemini"
+        case .openRouter: "com.sensedraft.mac.openrouter"
+        case .qwen: "com.sensedraft.mac.qwen"
+        case .custom: "com.sensedraft.mac.custom"
+        case .chatGPTPlan, .ollama, .appleLocal: nil
+        }
+    }
+
+    var isAdditionalAPI: Bool {
+        switch self {
+        case .claude, .gemini, .openRouter, .qwen, .ollama, .custom: true
+        default: false
+        }
+    }
+
+    var defaultModel: String {
+        switch self {
+        case .claude: "claude-sonnet-5-5"
+        case .gemini: "gemini-3.8-flash"
+        case .openRouter: "anthropic/claude-haiku-5.5"
+        case .qwen: "qwen3.8-flash"
+        case .ollama, .custom: ""
+        default: ""
         }
     }
 }
@@ -75,12 +105,22 @@ final class AppSettings: ObservableObject {
     @Published var kimiModel: String
     @Published var kimiRegion: KimiAPIRegion
     @Published var planModel: String
+    @Published var additionalModels: [AIProviderChoice: String]
+    @Published var additionalKeyDrafts: [AIProviderChoice: String] = [:]
+    @Published var additionalKeysSaved: Set<AIProviderChoice> = []
+    @Published var qwenRegion: QwenAPIRegion
+    @Published var customBaseURL: String
     @Published var planModels: [PlanModel] = []
     @Published var planAccountLabel: String = "Checking account…"
     @Published var connectingPlan = false
     private var connectTask: Task<Void, Never>?
     private var planRefreshTask: Task<Void, Never>?
-    @Published var locale: String
+    @Published var locale: String {
+        didSet { UserDefaults.standard.set(locale, forKey: "locale") }
+    }
+    @Published var referenceLocale: String {
+        didSet { UserDefaults.standard.set(referenceLocale, forKey: "referenceLocale") }
+    }
     @Published var allowFormattingLoss: Bool {
         didSet { UserDefaults.standard.set(allowFormattingLoss, forKey: "allowFormattingLoss") }
     }
@@ -127,7 +167,15 @@ final class AppSettings: ObservableObject {
         kimiModel = defaults.string(forKey: "kimiModel") ?? "kimi-k2.6"
         kimiRegion = KimiAPIRegion(rawValue: defaults.string(forKey: "kimiAPIRegion") ?? "") ?? .china
         planModel = defaults.string(forKey: "planModel") ?? ""
-        locale = defaults.string(forKey: "locale") ?? "en-US"
+        additionalModels = Dictionary(uniqueKeysWithValues: AIProviderChoice.allCases
+            .filter(\.isAdditionalAPI)
+            .map { ($0, defaults.string(forKey: "model.\($0.rawValue)") ?? $0.defaultModel) })
+        qwenRegion = QwenAPIRegion(rawValue: defaults.string(forKey: "qwenAPIRegion") ?? "") ?? .china
+        customBaseURL = defaults.string(forKey: "customAPIBaseURL") ?? ""
+        locale = LanguageChoice(rawValue: defaults.string(forKey: "locale") ?? "")?.rawValue
+            ?? LanguageChoice.defaultTarget.rawValue
+        referenceLocale = LanguageChoice(rawValue: defaults.string(forKey: "referenceLocale") ?? "")?.rawValue
+            ?? LanguageChoice.defaultReference.rawValue
         allowFormattingLoss = defaults.bool(forKey: "allowFormattingLoss")
         historyEnabled = defaults.bool(forKey: "historyEnabled")
         historyRetention = HistoryRetention(rawValue: defaults.string(forKey: "historyRetention") ?? "") ?? .unlimited
@@ -158,6 +206,16 @@ final class AppSettings: ObservableObject {
             hasKimiKey = stored.1
         }
         Task {
+            let choices = AIProviderChoice.allCases.filter(\.isAdditionalAPI)
+            let saved = await Task.detached(priority: .utility) {
+                Set(choices.filter { choice in
+                    guard let service = choice.keychainService else { return false }
+                    return (try? ProviderKeyStore.contains(service: service)) == true
+                })
+            }.value
+            additionalKeysSaved = saved
+        }
+        Task {
             planAccountLabel = await Task.detached(priority: .utility) {
                 let account = try? PlanAccountStore.load()
                 return account?.canUsePlan == true
@@ -169,18 +227,37 @@ final class AppSettings: ObservableObject {
     func saveAI() {
         do {
             let drafts = [apiKeyDraft, deepSeekKeyDraft, kimiKeyDraft]
+                + Array(additionalKeyDrafts.values)
             if drafts.contains(where: { !$0.isEmpty && $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
                 throw AISettingsError.blankKey
             }
             try saveKeyDraft(&apiKeyDraft, hasKey: &hasAPIKey, service: "com.sensedraft.mac.openai")
             try saveKeyDraft(&deepSeekKeyDraft, hasKey: &hasDeepSeekKey, service: "com.sensedraft.mac.deepseek")
             try saveKeyDraft(&kimiKeyDraft, hasKey: &hasKimiKey, service: "com.sensedraft.mac.kimi")
+            for choice in AIProviderChoice.allCases where choice.isAdditionalAPI {
+                guard let service = choice.keychainService else { continue }
+                let draft = additionalKeyDrafts[choice, default: ""].trimmingCharacters(in: .whitespacesAndNewlines)
+                if !draft.isEmpty {
+                    try ProviderKeyStore.save(draft, service: service)
+                    credentialCache.recordSave(draft, service: service)
+                    additionalKeyDrafts[choice] = ""
+                    additionalKeysSaved.insert(choice)
+                }
+            }
             UserDefaults.standard.set(model, forKey: "model")
             UserDefaults.standard.set(deepSeekModel, forKey: "deepSeekModel")
             UserDefaults.standard.set(kimiModel, forKey: "kimiModel")
             UserDefaults.standard.set(kimiRegion.rawValue, forKey: "kimiAPIRegion")
             UserDefaults.standard.set(planModel, forKey: "planModel")
+            for (choice, modelID) in additionalModels {
+                UserDefaults.standard.set(modelID.trimmingCharacters(in: .whitespacesAndNewlines),
+                                          forKey: "model.\(choice.rawValue)")
+            }
+            UserDefaults.standard.set(qwenRegion.rawValue, forKey: "qwenAPIRegion")
+            UserDefaults.standard.set(customBaseURL.trimmingCharacters(in: .whitespacesAndNewlines),
+                                      forKey: "customAPIBaseURL")
             UserDefaults.standard.set(locale, forKey: "locale")
+            UserDefaults.standard.set(referenceLocale, forKey: "referenceLocale")
             UserDefaults.standard.set(AIProviderChoice.allCases.filter { enabledProviders.contains($0) }.map(\.rawValue), forKey: "enabledAIProviders")
             UserDefaults.standard.set(AIProviderChoice.allCases.filter { resultProviders.contains($0) }.map(\.rawValue), forKey: "resultAIProviders")
             message = "AI settings saved."
@@ -211,7 +288,10 @@ final class AppSettings: ObservableObject {
             case .apiKey: hasAPIKey = false; apiKeyDraft = ""
             case .deepSeek: hasDeepSeekKey = false; deepSeekKeyDraft = ""
             case .kimi: hasKimiKey = false; kimiKeyDraft = ""
-            case .chatGPTPlan: break
+            case .claude, .gemini, .openRouter, .qwen, .custom:
+                additionalKeysSaved.remove(provider)
+                additionalKeyDrafts[provider] = ""
+            case .chatGPTPlan, .ollama, .appleLocal: break
             }
             message = "API key removed."
         } catch {
@@ -247,6 +327,21 @@ final class AppSettings: ObservableObject {
                         throw AISettingsError.blankKey
                     }
                     service = ChatCompletionsProvider(service: .kimi(kimiRegion), key: key, model: kimiModel)
+                case .claude, .gemini, .openRouter, .qwen, .ollama, .custom:
+                    let key: String
+                    if let keychainService = provider.keychainService {
+                        let configuredKey = try keyForCheck(additionalKeyDrafts[provider, default: ""],
+                                                            service: keychainService)
+                        guard provider == .custom || configuredKey != nil else {
+                            throw AISettingsError.blankKey
+                        }
+                        key = configuredKey ?? ""
+                    } else {
+                        key = ""
+                    }
+                    service = additionalService(for: provider, key: key)
+                case .appleLocal:
+                    service = AppleLocalProvider()
                 case .chatGPTPlan:
                     guard let account = try await ChatGPTAuth.validAccount(), !planModel.isEmpty else {
                         connectionChecks[provider] = .failed("Connect ChatGPT and select a model first.")
@@ -274,7 +369,28 @@ final class AppSettings: ObservableObject {
         try credentialCache.load(service: service)
     }
 
+    func additionalService(for provider: AIProviderChoice, key: String) -> any LanguageService {
+        let modelID = additionalModels[provider, default: ""].trimmingCharacters(in: .whitespacesAndNewlines)
+        switch provider {
+        case .claude:
+            return ClaudeProvider(key: key, model: modelID)
+        case .gemini:
+            return CompatibleProvider(service: .gemini, key: key, model: modelID)
+        case .openRouter:
+            return CompatibleProvider(service: .openRouter, key: key, model: modelID)
+        case .qwen:
+            return CompatibleProvider(service: .qwen(qwenRegion), key: key, model: modelID)
+        case .ollama:
+            return CompatibleProvider(service: .ollama, key: "", model: modelID)
+        case .custom:
+            return CompatibleProvider(service: .custom(customBaseURL), key: key, model: modelID)
+        default:
+            preconditionFailure("Not an additional API service")
+        }
+    }
+
     private func connectionErrorMessage(_ error: Error) -> String {
+        if error is AISettingsError { return error.localizedDescription }
         if let error = error as? OpenAIProviderError {
             if case .httpStatus(let code) = error { return ProviderHTTPStatusMessage.forConnectionCheck(code) }
         }
@@ -286,6 +402,19 @@ final class AppSettings: ObservableObject {
                 return ProviderHTTPStatusMessage.forConnectionCheck(code, kimiErrorType: type)
             }
         }
+        if let error = error as? ClaudeProviderError {
+            if case .httpStatus(let code) = error { return ProviderHTTPStatusMessage.forConnectionCheck(code) }
+        }
+        if let error = error as? CompatibleProviderError {
+            switch error {
+            case .httpStatus(let code): return ProviderHTTPStatusMessage.forConnectionCheck(code)
+            case .invalidEndpoint: return "Enter an HTTPS API base URL, or localhost for a local server."
+            case .missingModel: return "Enter a model ID first."
+            case .missingKey: return "Enter an API key first."
+            case .incomplete, .invalidResponse: return "The model returned an incomplete or unreadable analysis."
+            }
+        }
+        if error is AppleLocalProviderError { return error.localizedDescription }
         if let error = error as? URLError { return error.localizedDescription }
         return "Connection failed. Check the account, model, and network."
     }
@@ -545,7 +674,7 @@ private struct SettingsView: View {
                 appLogo.frame(width: 72, height: 72).accessibilityLabel("SenseDraft app icon")
                 VStack(alignment: .leading, spacing: 6) {
                     Text("SenseDraft").font(.title.bold())
-                    Text("Review English with its Chinese meaning before replacing the source.")
+                    Text("Review each suggestion against its meaning check before replacing the source.")
                         .foregroundStyle(.secondary)
                 }
             }
@@ -702,6 +831,7 @@ private struct SettingsView: View {
             .labelsHidden()
             .toggleStyle(.switch)
             .controlSize(.small)
+            .disabled(choice == .appleLocal && !AppleLocalProvider.isAvailable)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 9)
@@ -717,6 +847,12 @@ private struct SettingsView: View {
         case .chatGPTPlan: settings.planAccountLabel == "Not connected" ? "Connect an account" : settings.planAccountLabel
         case .deepSeek: settings.hasDeepSeekKey ? "API key saved" : "Add an API key"
         case .kimi: settings.hasKimiKey ? "API key saved" : "Add an API key"
+        case .claude, .gemini, .openRouter, .qwen:
+            settings.additionalKeysSaved.contains(choice) ? "API key saved" : "Add an API key"
+        case .custom:
+            settings.additionalKeysSaved.contains(choice) ? "API key saved" : "API key optional"
+        case .ollama: "Local server · no API key"
+        case .appleLocal: AppleLocalProvider.availabilityDescription
         }
     }
 
@@ -780,6 +916,48 @@ private struct SettingsView: View {
                     .font(.caption)
                 connectionControl(for: choice, enabled: settings.planAccountLabel != "Not connected" && !settings.planModel.isEmpty)
             }
+        case .claude, .gemini, .openRouter, .qwen, .ollama, .custom:
+            VStack(alignment: .leading, spacing: 10) {
+                if choice == .qwen {
+                    Picker("API region", selection: $settings.qwenRegion) {
+                        Text("China · Beijing").tag(QwenAPIRegion.china)
+                        Text("International · Singapore").tag(QwenAPIRegion.singapore)
+                    }
+                }
+                if choice == .custom {
+                    TextField("API base URL", text: $settings.customBaseURL)
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Custom API base URL")
+                    Text("Use HTTPS, or localhost for a local server. Include /v1 if your service requires it.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                TextField(choice == .ollama ? "Installed model ID" : "Model ID",
+                          text: Binding(get: { settings.additionalModels[choice, default: ""] },
+                                        set: { settings.additionalModels[choice] = $0 }))
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("\(choice.title) model ID")
+                resultDisplayControl(for: choice)
+                if choice == .ollama {
+                    Text("Start Ollama and enter the ID of a model installed on this Mac.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    connectionControl(for: choice, enabled: !settings.additionalModels[choice, default: ""].isEmpty)
+                } else {
+                    keyEntry(choice.title,
+                             draft: Binding(get: { settings.additionalKeyDrafts[choice, default: ""] },
+                                            set: { settings.additionalKeyDrafts[choice] = $0 }),
+                             hasKey: settings.additionalKeysSaved.contains(choice), choice: choice,
+                             keyRequired: choice != .custom)
+                }
+            }
+        case .appleLocal:
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Runs on this Mac with Apple Intelligence. Available on supported macOS 26 devices and languages.")
+                    .font(.callout).foregroundStyle(.secondary)
+                Text(AppleLocalProvider.availabilityDescription)
+                    .font(.callout)
+                resultDisplayControl(for: choice)
+                connectionControl(for: choice, enabled: AppleLocalProvider.isAvailable)
+            }
         }
     }
 
@@ -796,7 +974,8 @@ private struct SettingsView: View {
             ))
             .labelsHidden()
             .toggleStyle(.switch)
-            .disabled(!settings.enabledProviders.contains(choice))
+            .disabled(!settings.enabledProviders.contains(choice)
+                      || (choice == .appleLocal && !AppleLocalProvider.isAvailable))
         }
         .font(.callout)
         .help(settings.enabledProviders.contains(choice)
@@ -805,9 +984,10 @@ private struct SettingsView: View {
     }
 
     private func keyEntry(_ name: String, draft: Binding<String>, hasKey: Bool,
-                          choice: AIProviderChoice) -> some View {
+                          choice: AIProviderChoice, keyRequired: Bool = true) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("API key").font(.callout.weight(.medium))
+            Text(keyRequired ? "API key" : "API key · optional for local servers")
+                .font(.callout.weight(.medium))
             SecureField(hasKey ? String(repeating: "•", count: 16) : "Enter \(name) API key", text: draft)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityLabel("\(name) API key\(hasKey ? ", saved" : "")")
@@ -817,7 +997,7 @@ private struct SettingsView: View {
                      : "New key entered — save to keep it")
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                connectionControl(for: choice, enabled: hasKey || !draft.wrappedValue.isEmpty)
+                connectionControl(for: choice, enabled: !keyRequired || hasKey || !draft.wrappedValue.isEmpty)
                 if hasKey {
                     Button("Remove key") { settings.removeKey(for: choice) }
                         .buttonStyle(.link)
@@ -867,19 +1047,27 @@ private struct SettingsView: View {
             if selectedWritingSection == 0 {
                 Text("Language & style").font(.title3.weight(.semibold))
                 Divider()
-                Picker("English locale", selection: $settings.locale) {
-                    Text("US English").tag("en-US")
-                    Text("UK English").tag("en-GB")
+                Picker("Write in", selection: $settings.locale) {
+                    ForEach(LanguageChoice.primaryTargets + LanguageChoice.moreTargets) { language in
+                        Text(language.title).tag(language.rawValue)
+                    }
+                }
+                Picker("Check meaning in", selection: $settings.referenceLocale) {
+                    ForEach(LanguageChoice.primaryReferences + LanguageChoice.moreReferences) { language in
+                        Text(language.title).tag(language.rawValue)
+                    }
                 }
                 Picker("Tone", selection: $settings.writingPreferences.style) {
                     ForEach(WritingStyle.allCases) { style in Text(style.title).tag(style) }
                 }
                 .pickerStyle(.segmented)
-                Picker("Opening case", selection: $settings.writingPreferences.openingCase) {
-                    ForEach(OpeningCase.allCases) { option in Text(option.title).tag(option) }
+                if LanguageChoice(rawValue: settings.locale)?.isEnglish == true {
+                    Picker("Opening case", selection: $settings.writingPreferences.openingCase) {
+                        ForEach(OpeningCase.allCases) { option in Text(option.title).tag(option) }
+                    }
+                    .pickerStyle(.segmented)
+                    Toggle("Use natural English abbreviations", isOn: $settings.writingPreferences.useNaturalAbbreviations)
                 }
-                .pickerStyle(.segmented)
-                Toggle("Use natural English abbreviations", isOn: $settings.writingPreferences.useNaturalAbbreviations)
                 Text("Names, numbers, commitments, and the original meaning remain unchanged.")
                     .font(.callout).foregroundStyle(.secondary)
             } else {
@@ -895,9 +1083,6 @@ private struct SettingsView: View {
             }
         }
         .navigationTitle("Writing")
-        .onChange(of: settings.locale) { _, value in
-            UserDefaults.standard.set(value, forKey: "locale")
-        }
     }
 
     private var shortcutsPage: some View {

@@ -2,6 +2,16 @@ import AppKit
 import SenseDraftCore
 import SwiftUI
 
+private extension HistoryEntry {
+    var targetLanguageTitle: String {
+        LanguageChoice(rawValue: targetLocale ?? "")?.title ?? LanguageChoice.defaultTarget.title
+    }
+
+    var referenceLanguageTitle: String {
+        LanguageChoice(rawValue: referenceLocale ?? "")?.title ?? LanguageChoice.defaultReference.title
+    }
+}
+
 private enum HistoryFilter: String, CaseIterable {
     case all = "All"
     case replaced = "Replaced"
@@ -192,8 +202,8 @@ private struct HistoryDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     textSection("ORIGINAL", text: entry.source)
-                    textSection("ENGLISH", text: entry.english)
-                    textSection("CHINESE MEANING", text: entry.chinese)
+                    textSection("SUGGESTION · \(entry.targetLanguageTitle)", text: entry.english)
+                    textSection("MEANING CHECK · \(entry.referenceLanguageTitle)", text: entry.chinese)
                     if let reason = entry.reason, !reason.isEmpty {
                         textSection("WHY", text: reason)
                     }
@@ -206,7 +216,7 @@ private struct HistoryDetailView: View {
             }
 
             HStack {
-                Button("Copy English") {
+                Button("Copy suggestion") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(entry.english, forType: .string)
                 }
@@ -275,12 +285,12 @@ struct HistoryQuickView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
                         quickSection("ORIGINAL", text: entry.source)
-                        quickSection("ENGLISH", text: entry.english)
-                        quickSection("CHINESE MEANING", text: entry.chinese)
+                        quickSection("SUGGESTION · \(entry.targetLanguageTitle)", text: entry.english)
+                        quickSection("MEANING CHECK · \(entry.referenceLanguageTitle)", text: entry.chinese)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                Button("Copy English") {
+                Button("Copy suggestion") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(entry.english, forType: .string)
                 }

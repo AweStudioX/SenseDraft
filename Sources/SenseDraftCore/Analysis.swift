@@ -71,6 +71,7 @@ public enum AnalysisError: Error, Equatable {
 public struct AnalysisInput: Equatable, Sendable {
     public let source: String
     public let locale: String
+    public let referenceLocale: String
     public let chineseIntent: String?
     public let preferences: WritingPreferences
 
@@ -83,13 +84,15 @@ public struct AnalysisInput: Equatable, Sendable {
         }
     }
 
-    public init(source: String, locale: String, chineseIntent: String?,
+    public init(source: String, locale: String, referenceLocale: String = LanguageChoice.defaultReference.rawValue,
+                chineseIntent: String?,
                 preferences: WritingPreferences = WritingPreferences()) throws {
         guard !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw AnalysisError.blankSource
         }
         self.source = source
         self.locale = locale
+        self.referenceLocale = referenceLocale
         self.chineseIntent = chineseIntent
         self.preferences = preferences
     }

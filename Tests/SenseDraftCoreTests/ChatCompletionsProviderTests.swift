@@ -33,6 +33,25 @@ final class ChatCompletionsProviderTests: XCTestCase {
         XCTAssertEqual((body["thinking"] as? [String: String])?["type"], "disabled")
     }
 
+    func testKimiRegenerationPutsEditedChineseInUserMessage() async throws {
+        let transport = RecordingTransport(body: response)
+        let provider = ChatCompletionsProvider(service: .kimi(.china), key: "kimi-key",
+                                               transport: transport)
+        let input = try AnalysisInput(source: "It is an awesome project.", locale: "en-US",
+                                      chineseIntent: "这是一个很棒的项目，我还会继续测试它。")
+
+        _ = try await provider.analyze(input)
+
+        let requests = await transport.requests
+        let request = try XCTUnwrap(requests.first)
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as? [String: Any])
+        let messages = try XCTUnwrap(body["messages"] as? [[String: String]])
+        let user = try XCTUnwrap(messages.first(where: { $0["role"] == "user" })?["content"])
+        XCTAssertTrue(user.contains(input.source))
+        XCTAssertTrue(user.contains("这是一个很棒的项目，我还会继续测试它。"))
+        XCTAssertTrue(user.contains("Authoritative revised meaning"))
+    }
+
     func testKimiK3DoesNotDisableThinking() async throws {
         let transport = RecordingTransport(body: response)
         let provider = ChatCompletionsProvider(service: .kimi(.china), key: "kimi-key", model: "kimi-k3",

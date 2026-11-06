@@ -10,10 +10,13 @@ public struct HistoryEntry: Codable, Equatable, Identifiable, Sendable {
     public var ambiguity: String?
     public let provider: String
     public var replaced: Bool
+    public var targetLocale: String?
+    public var referenceLocale: String?
 
     public init(id: UUID = UUID(), createdAt: Date = Date(), source: String,
                 english: String, chinese: String, reason: String? = nil,
-                ambiguity: String? = nil, provider: String, replaced: Bool = false) {
+                ambiguity: String? = nil, provider: String, replaced: Bool = false,
+                targetLocale: String? = nil, referenceLocale: String? = nil) {
         self.id = id
         self.createdAt = createdAt
         self.source = source
@@ -23,6 +26,8 @@ public struct HistoryEntry: Codable, Equatable, Identifiable, Sendable {
         self.ambiguity = ambiguity
         self.provider = provider
         self.replaced = replaced
+        self.targetLocale = targetLocale
+        self.referenceLocale = referenceLocale
     }
 }
 
@@ -65,7 +70,8 @@ public enum HistoryLedger {
             revised = HistoryEntry(id: entry.id, createdAt: existing.createdAt,
                                    source: entry.source, english: entry.english, chinese: entry.chinese,
                                    reason: entry.reason, ambiguity: entry.ambiguity,
-                                   provider: entry.provider, replaced: existing.replaced)
+                                   provider: entry.provider, replaced: existing.replaced,
+                                   targetLocale: entry.targetLocale, referenceLocale: entry.referenceLocale)
         }
         return prune([revised] + entries.filter { $0.id != entry.id }, retention: retention, now: now)
     }

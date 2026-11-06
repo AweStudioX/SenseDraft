@@ -24,6 +24,28 @@ enum ProviderResultErrorMessage {
                 return "\(provider) returned an unreadable result. Try Regenerate."
             }
         }
+        if let error = error as? ClaudeProviderError {
+            switch error {
+            case .missingKey: return "Add a Claude API key in Settings → AI Services."
+            case .missingModel: return "Select a Claude model in Settings → AI Services."
+            case .httpStatus(let status): return ProviderHTTPStatusMessage.forConnectionCheck(status)
+            case .incomplete: return "Claude returned an incomplete result. Try Regenerate."
+            case .invalidResponse: return "Claude returned an unreadable result. Try Regenerate."
+            }
+        }
+        if let error = error as? CompatibleProviderError {
+            switch error {
+            case .missingKey: return "Add a \(provider) API key in Settings → AI Services."
+            case .missingModel: return "Enter a \(provider) model ID in Settings → AI Services."
+            case .invalidEndpoint: return "Check the \(provider) API base URL in Settings → AI Services."
+            case .httpStatus(let status): return ProviderHTTPStatusMessage.forConnectionCheck(status)
+            case .incomplete: return "\(provider) returned an incomplete result. Try Regenerate."
+            case .invalidResponse: return "\(provider) returned an unreadable result. Try Regenerate."
+            }
+        }
+        if let error = error as? AppleLocalProviderError {
+            return error.localizedDescription
+        }
         if let error = error as? OpenAIProviderError {
             switch error {
             case .missingKey:

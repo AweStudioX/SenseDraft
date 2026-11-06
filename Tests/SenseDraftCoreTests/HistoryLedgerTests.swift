@@ -2,6 +2,19 @@ import XCTest
 @testable import SenseDraftCore
 
 final class HistoryLedgerTests: XCTestCase {
+    func testRegenerationKeepsSelectedLanguagesInHistory() throws {
+        let id = UUID()
+        let first = HistoryEntry(id: id, source: "draft", english: "draft", chinese: "释义",
+                                 provider: "OpenAI", targetLocale: "en-US", referenceLocale: "zh-Hans")
+        let revised = HistoryEntry(id: id, source: "draft", english: "Bonjour", chinese: "こんにちは",
+                                   provider: "OpenAI", targetLocale: "fr-FR", referenceLocale: "ja-JP")
+        let stored = HistoryLedger.upsert(revised, into: [first])
+        XCTAssertEqual(stored[0].targetLocale, "fr-FR")
+        XCTAssertEqual(stored[0].referenceLocale, "ja-JP")
+        let decoded = try JSONDecoder().decode(HistoryEntry.self, from: JSONEncoder().encode(stored[0]))
+        XCTAssertEqual(decoded.targetLocale, "fr-FR")
+    }
+
     func testRegenerationUpdatesTheExistingEntry() {
         let id = UUID()
         let first = HistoryEntry(id: id, createdAt: Date(timeIntervalSince1970: 100),

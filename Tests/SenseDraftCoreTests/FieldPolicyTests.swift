@@ -21,9 +21,9 @@ final class FieldPolicyTests: XCTestCase {
         XCTAssertNoThrow(try FieldPolicy.validate(role: "AXTextArea", protected: false, editable: true, value: "Please review 这个版本"))
     }
 
-    func testJapaneseKanaIsRejected() {
-        XCTAssertThrowsError(try FieldPolicy.validate(role: "AXTextArea", protected: false, editable: true, value: "こんにちは")) { error in
-            XCTAssertEqual(error as? FieldError, .nonEnglish)
+    func testOtherScriptsAreAcceptedForMultilingualWriting() {
+        for value in ["こんにちは", "안녕하세요", "Привет", "مرحبا"] {
+            XCTAssertNoThrow(try FieldPolicy.validate(role: "AXTextArea", protected: false, editable: true, value: value))
         }
     }
     func testEditableTextAreaIsAccepted() throws {

@@ -55,7 +55,7 @@ public struct ChatCompletionsProvider: LanguageService {
             "model": model,
             "messages": [
                 ["role": "system", "content": instructions],
-                ["role": "user", "content": input.source]
+                ["role": "user", "content": AnalysisPrompt.userMessage(for: input)]
             ],
             "response_format": ["type": "json_object"]
         ]
